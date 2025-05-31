@@ -35,7 +35,6 @@ pydantic
 pydantic_core
 python-dotenv
 python-gemini-api
-pywin32
 requests
 shadowcopy
 sniffio
