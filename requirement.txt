@@ -1,0 +1,5 @@
+discord.py
+bardapi
+python-dotenv
+requests
+flask
