@@ -123,5 +123,9 @@ Yu Zhong:"""
         #except Exception as e:
          #   print("API Error:", str(e))
           #  await message.reply("Yu Zhong is... disturbed. (API error)")
+import threading
+from server import app
+
+threading.Thread(target=app.run, kwargs={"host": "0.0.0.0", "port": 8080}).start()
 
 client.run(DISCORD_TOKEN)
