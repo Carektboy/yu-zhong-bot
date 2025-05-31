@@ -125,8 +125,3 @@ Yu Zhong:"""
           #  await message.reply("Yu Zhong is... disturbed. (API error)")
 
 client.run(DISCORD_TOKEN)
-
-import threading
-from server import app
-
-threading.Thread(target=app.run, kwargs={"host": "0.0.0.0", "port": 8080}).start()
