@@ -1,6 +1,6 @@
 
 import keep_alive
-keep_alive.run()
+keep_alive.keep_alive()
 
 
 from bardapi import Bard
