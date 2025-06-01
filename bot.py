@@ -1,3 +1,5 @@
+print("DEBUG: Script execution started for bot.py!")
+
 import keep_alive
 import discord
 import os
