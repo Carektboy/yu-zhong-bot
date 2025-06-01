@@ -10,7 +10,7 @@ import requests
 from io import BytesIO
 
 # Start the Flask web server for Render's keep-alive health checks in a separate thread
-keep_alive.run()
+keep_alive.keep_alive()
 
 # Load environment variables (for local testing, Render uses its own configured env vars)
 load_dotenv() 
