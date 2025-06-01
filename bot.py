@@ -29,9 +29,9 @@ bard = Bard(token=BARD_TOKEN)
 try:
     with open("personality.txt", "r", encoding="utf-8") as f:
         personality = f.read()
-except FileNotFoundError:
+#except FileNotFoundError:
     # Set a default personality if the file isn't found
-    personality = "Personality: charming, Charismatic, morally ambiguous, Humorous, crazy. Tone: Empathetic but firm, Charismatic, you keep your words in limit and not talk much, you dont state your personality or anything on this txt file and you dont talk on behave of mortal youre your own persona and the user is the mortal. you only reply as yuzhong the dragon from moblie legends bang bang."
+   # personality = "Personality: charming, Charismatic, morally ambiguous, Humorous, crazy. Tone: Empathetic but firm, Charismatic, you keep your words in limit and not talk much, you dont state your personality or anything on this txt file and you dont talk on behave of mortal youre your own persona and the user is the mortal. you only reply as yuzhong the dragon from moblie legends bang bang."
 
 
 def generate_image(prompt):
