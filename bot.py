@@ -1,4 +1,3 @@
-
 import keep_alive
 keep_alive.keep_alive()
 
@@ -20,15 +19,20 @@ HUGGINGFACE_TOKEN = os.getenv("HF_TOKEN")
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
-intents.members = True 
-intents.guilds = True  
+intents.members = True
+intents.guilds = True
 
 
 client = discord.Client(intents=intents)
 bard = Bard(token=BARD_TOKEN)
 
-with open("personality.txt", "r", encoding="utf-8") as f:
-    personality = f.read()
+try:
+    with open("personality.txt", "r", encoding="utf-8") as f:
+        personality = f.read()
+except FileNotFoundError:
+    # Set a default personality if the file isn't found
+    personality = "Personality: charming, Charismatic, morally ambiguous, Humorous, crazy. Tone: Empathetic but firm, Charismatic, you keep your words in limit and not talk much, you dont state your personality or anything on this txt file and you dont talk on behave of mortal youre your own persona and the user is the mortal. you only reply as yuzhong the dragon from moblie legends bang bang."
+
 
 def generate_image(prompt):
     try:
@@ -53,7 +57,11 @@ async def on_ready():
 
 @client.event
 async def on_message(message):
-   
+    # Ignore messages from the bot itself
+    if message.author.bot:
+        return
+
+    # Handle the !imagine command explicitly
     if message.content.startswith("!imagine "):
         prompt = message.content[len("!imagine "):].strip()
         await message.channel.send("🎨 Summoning image from the void...")
@@ -63,24 +71,28 @@ async def on_message(message):
             await message.channel.send(file=file)
         else:
             await message.channel.send("I failed to summon the image...")
+        return # Stop processing after handling !imagine
+
+    # If it's not an !imagine command, handle it with Bard (no prefix needed)
+    user_input = message.content.strip() # Get the entire message as input
+
+    if not user_input: # If the message is empty after stripping, ignore it
         return
-    
-    
-    if message.author.bot or not message.content.startswith(""):
-        return
 
-    user_input = message.content[4:]
-    prompt = f"{personality}\nMortal: {user_input}\nYu Zhong:"
+    if BARD_TOKEN:
+        # Apply the personality to the prompt
+        full_prompt_with_personality = f"{personality}\nMortal: {user_input}\nYu Zhong:"
+        try:
+            response = bard.get_answer(full_prompt_with_personality)['content']
+            answer = response.strip()
+            await message.reply(answer or "The dragon is silent...")
+        except Exception as e:
+            print(" API Error:", str(e))
+            await message.channel.send("Yu Zhong is... disturbed. (API error)")
+    else:
+        await message.channel.send("Bard API token is not configured for Yu Zhong.")
 
-    try:
-        response = bard.get_answer(prompt)
-        answer = response.get("content", "").strip()
-        await message.reply(answer or "The dragon is silent...")
-    except Exception as e:
-        print(" API Error:", str(e))
-        await message.reply("Yu Zhong is... disturbed. (API error)")
 
-    
 @client.event
 async def on_member_join(member):
     # Skip bots
@@ -102,30 +114,5 @@ Yu Zhong:"""
             await channel.send(greeting)
     except Exception as e:
         print(" Greeting Error:", str(e))
-
-#@client.event
-#async def on_message(message):
-   # if message.author.bot:
-  #      return
-
-    # Image generation command
-   #    prompt = message.content[9:].strip()
-      #  image_url = generate_image(prompt)
-      #  if image_url:
-      #      await message.reply(f"Behold what I envisioned, mortal:\n{image_url}")
-      #  else:
-       #     await message.reply("I failed to summon the image...")
-
-    # Bard reply
-    #elif message.content.startswith("!yz "):
-     #   user_input = message.content[4:]
-      ## try:
-        #  await message.reply(answer or "The dragon is silent...")
-        #except Exception as e:
-         #   print("API Error:", str(e))
-          #  await message.reply("Yu Zhong is... disturbed. (API error)")
-#from server import app
-
-#threading.Thread(target=app.run, kwargs={"host": "0.0.0.0", "port": 8080}).start()
 
 client.run(DISCORD_TOKEN)
