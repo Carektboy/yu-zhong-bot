@@ -1,16 +1,15 @@
 import keep_alive
 keep_alive.run()
 
-
 from bardapi import Bard
 import discord
 import os
-from dotenv import load_dotenv
+from dotenv import load_dotenv # Still useful for local testing
+
 import requests
 from io import BytesIO
 
-
-load_dotenv()
+load_dotenv() # Loads .env locally, ignored on Render if env vars are set
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 BARD_TOKEN = os.getenv("BARD_TOKEN")
@@ -19,9 +18,8 @@ HUGGINGFACE_TOKEN = os.getenv("HF_TOKEN")
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
-intents.members = True 
-intents.guilds = True  
-
+intents.members = True
+intents.guilds = True
 
 client = discord.Client(intents=intents)
 bard = Bard(token=BARD_TOKEN)
@@ -48,83 +46,39 @@ def generate_image(prompt):
 
 @client.event
 async def on_ready():
-    print(" Yu Zhong has awakened...")
+    print(" Yu Zhong has awakened...") # We need to see this!
 
 @client.event
 async def on_message(message):
-   
-    if message.content.startswith("!imagine "):
-        prompt = message.content[len("!imagine "):].strip()
-        await message.channel.send("🎨 Summoning image from the void...")
-        image_bytes = generate_image(prompt)
-        if image_bytes:
-            file = discord.File(image_bytes, filename="yu_zhong_creation.png")
-            await message.channel.send(file=file)
-        else:
-            await message.channel.send("I failed to summon the image...")
-        return
-    
-    
-    if message.author.bot or not message.content.startswith(""):
-        return
+    # ... (your on_message code) ...
+    # (Make sure the if message.author.bot or not message.content.startswith(""): is not too restrictive if you use prefixes)
+    # You have: if message.author.bot or not message.content.startswith(""): return
+    # This will block messages not starting with anything (i.e. all messages). This line should probably be
+    # if message.author.bot: return
+    # and then your specific command checks should follow.
+    # However, this won't stop the bot from coming online.
+    pass # Placeholder for brevity, your code is here.
 
-    user_input = message.content[4:]
-    prompt = f"{personality}\nMortal: {user_input}\nYu Zhong:"
 
-    try:
-        response = bard.get_answer(prompt)
-        answer = response.get("content", "").strip()
-        await message.reply(answer or "The dragon is silent...")
-    except Exception as e:
-        print(" API Error:", str(e))
-        await message.reply("Yu Zhong is... disturbed. (API error)")
-
-    
 @client.event
 async def on_member_join(member):
-    # Skip bots
-    if member.bot:
-        return
+    # ... (your on_member_join code) ...
+    pass # Placeholder for brevity, your code is here.
 
-    prompt = f"""{personality}
-
-A new mortal named {member.name} has entered Yu Zhong's domain (the Discord server). Greet them as Yu Zhong would — with charisma, subtle menace, and a touch of wit. Keep it short and in character.
-Yu Zhong:"""
-
+# -----------------------------------------------------------
+# CRITICAL NEW DEBUGGING BLOCK
+# -----------------------------------------------------------
+print("Attempting to run client.run(DISCORD_TOKEN)") # New log
+if not DISCORD_TOKEN:
+    print("ERROR: DISCORD_TOKEN is None! Bot cannot connect.") # New log if token is missing
+else:
     try:
-        response = bard.get_answer(prompt)
-        greeting = response.get("content", "").strip()
-
-        # Find a channel to send the message
-        channel = next((ch for ch in member.guild.text_channels if ch.permissions_for(member.guild.me).send_messages), None)
-        if channel:
-            await channel.send(greeting)
+        client.run(DISCORD_TOKEN)
+    except discord.LoginFailure:
+        print("ERROR: Bot login failed! This usually means the DISCORD_TOKEN is invalid.") # New specific error log
+    except discord.HTTPException as e:
+        print(f"ERROR: Discord HTTP Exception during login: {e}") # New specific error log
     except Exception as e:
-        print(" Greeting Error:", str(e))
-
-#@client.event
-#async def on_message(message):
-   # if message.author.bot:
-  #      return
-
-    # Image generation command
-   #    prompt = message.content[9:].strip()
-      #  image_url = generate_image(prompt)
-      #  if image_url:
-      #      await message.reply(f"Behold what I envisioned, mortal:\n{image_url}")
-      #  else:
-       #     await message.reply("I failed to summon the image...")
-
-    # Bard reply
-    #elif message.content.startswith("!yz "):
-     #   user_input = message.content[4:]
-      ## try:
-        #  await message.reply(answer or "The dragon is silent...")
-        #except Exception as e:
-         #   print("API Error:", str(e))
-          #  await message.reply("Yu Zhong is... disturbed. (API error)")
-#from server import app
-
-#threading.Thread(target=app.run, kwargs={"host": "0.0.0.0", "port": 8080}).start()
-
-client.run(DISCORD_TOKEN)
+        print(f"ERROR: An unexpected exception occurred during client.run(): {e}") # Catch all other errors
+print("client.run() call finished or failed to start.") # This indicates the bot process exited.
+# -----------------------------------------------------------
