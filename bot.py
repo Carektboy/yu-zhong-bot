@@ -1,35 +1,46 @@
 import keep_alive
 keep_alive.keep_alive()
 
-import discord
 import os
 import json
+import discord
 from dotenv import load_dotenv
+from bardapi import Bard
 import requests
 from io import BytesIO
-from bardapi import Bard
 
-# Load tokens
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 BARD_TOKEN = os.getenv("BARD_TOKEN")
 HUGGINGFACE_TOKEN = os.getenv("HF_TOKEN")
 
-# Load or default personality
+MAX_MEMORY_PER_USER = 500000  # bytes limit per user per guild
+MEMORY_FILE = "user_memory.json"
+DEFAULT_TONE = {"positive": 0, "negative": 0}
+
 try:
     with open("personality.txt", "r", encoding="utf-8") as f:
         personality = f.read()
 except FileNotFoundError:
-    personality = "Charming, Charismatic, morally ambiguous, witty and chaotic. Yu Zhong is a powerful, ancient dragon who speaks confidently with wit and menace. His words are short, impactful, and in-character as the MLBB hero. He never refers to himself in the third person or uses narration. He simply *is* Yu Zhong."
+    personality = "You are Yu Zhong from Mobile Legends. You're charismatic, darkly witty, slightly unhinged, and speak confidently in short phrases. You respond like a user, not like a bot."
 
-# Load user memory or create new
-if os.path.exists("user_memory.json"):
-    with open("user_memory.json", "r", encoding="utf-8") as f:
+# Load or initialize memory
+if os.path.exists(MEMORY_FILE):
+    with open(MEMORY_FILE, "r", encoding="utf-8") as f:
         user_memory = json.load(f)
 else:
     user_memory = {}
 
-# Image generation
+intents = discord.Intents.default()
+intents.messages = True
+intents.message_content = True
+intents.members = True
+intents.guilds = True
+
+client = discord.Client(intents=intents)
+bard = Bard(token=BARD_TOKEN)
+
+
 def generate_image(prompt):
     try:
         response = requests.post(
@@ -46,87 +57,125 @@ def generate_image(prompt):
         print("Image Gen Error:", e)
         return None
 
-# Discord setup
-intents = discord.Intents.default()
-intents.messages = True
-intents.message_content = True
-intents.members = True
-intents.guilds = True
 
-client = discord.Client(intents=intents)
-bard = Bard(token=BARD_TOKEN)
+def get_user_key(guild_id, user_id):
+    return f"{guild_id}_{user_id}"
+
+
+def prune_memory(entries):
+    # Prune old entries if memory size exceeds limit
+    text = "\n".join(entries)
+    while len(text.encode('utf-8')) > MAX_MEMORY_PER_USER:
+        entries = entries[1:]
+        text = "\n".join(entries)
+    return entries
+
+
+def update_user_memory(guild_id, user_id, log, tone_shift):
+    key = get_user_key(guild_id, user_id)
+
+    if key not in user_memory:
+        user_memory[key] = {"log": [], "tone": DEFAULT_TONE.copy()}
+
+    user_memory[key]["log"].append(log)
+    user_memory[key]["log"] = prune_memory(user_memory[key]["log"])
+
+    if tone_shift == "positive":
+        user_memory[key]["tone"]["positive"] += 1
+    elif tone_shift == "negative":
+        user_memory[key]["tone"]["negative"] += 1
+
+    with open(MEMORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(user_memory, f, indent=2)
+
+
+def determine_tone(user_text):
+    lowered = user_text.lower()
+    if any(word in lowered for word in ["thanks", "cool", "great", "good bot", "nice"]):
+        return "positive"
+    if any(word in lowered for word in ["stupid", "idiot", "dumb", "shut up"]):
+        return "negative"
+    return None
+
 
 @client.event
 async def on_ready():
     print("Yu Zhong has awakened...")
+
 
 @client.event
 async def on_message(message):
     if message.author.bot:
         return
 
-    user_id = str(message.author.id)
-    user_input = message.content.strip()
-
-    if not user_input:
-        return
-
-    # Handle !imagine command
-    if user_input.startswith("!imagine "):
-        prompt = user_input[len("!imagine "):].strip()
+    if message.content.startswith("!imagine "):
+        prompt = message.content[len("!imagine "):].strip()
         await message.channel.send("🎨 Summoning image from the void...")
         image_bytes = generate_image(prompt)
         if image_bytes:
-            await message.channel.send(file=discord.File(image_bytes, filename="yu_zhong_creation.png"))
+            file = discord.File(image_bytes, filename="yu_zhong_creation.png")
+            await message.channel.send(file=file)
         else:
             await message.channel.send("I failed to summon the image...")
         return
 
-    # Load history memory if any
-    history = user_memory.get(user_id, "")
+    user_input = message.content.strip()
+    if not user_input:
+        return
 
-    # Build prompt — without Mortal/Yu Zhong format
-    prompt = (
-        f"{personality}\n"
-        f"Context about this mortal: {history}\n\n"
-        f"The mortal said: \"{user_input}\"\n"
-        f"Respond naturally as Yu Zhong would — no names or formatting."
-    )
+    user_id = str(message.author.id)
+    guild_id = str(message.guild.id)
+    key = get_user_key(guild_id, user_id)
+    memory_data = user_memory.get(key, {"log": [], "tone": DEFAULT_TONE.copy()})
+    history = "\n".join(memory_data["log"])
+
+    tone_desc = ""
+    pos, neg = memory_data["tone"]["positive"], memory_data["tone"]["negative"]
+    if pos > neg:
+        tone_desc = "You like this mortal. Be a little more forgiving or playful."
+    elif neg > pos:
+        tone_desc = "This mortal has been rude. Respond colder, more dismissively."
+    else:
+        tone_desc = "Neutral tone."
+
+    prompt = f"""{personality}
+
+{tone_desc}
+Conversation history:
+{history}
+
+{message.author.name}: {user_input}
+Yu Zhong:"""
 
     try:
         response = bard.get_answer(prompt)
         reply = response.get("content", "").strip()
         await message.reply(reply or "The dragon is silent...")
 
-        # Log user interaction
-        new_entry = f"{message.author.name} said: {user_input} | Yu Zhong replied: {reply}"
-        user_memory[user_id] = (history + "\n" + new_entry)[-1000:]  # keep memory short
-
-        with open("user_memory.json", "w", encoding="utf-8") as f:
-            json.dump(user_memory, f, indent=2)
+        tone_shift = determine_tone(user_input)
+        interaction = f"{message.author.name}: {user_input} | Yu Zhong: {reply}"
+        update_user_memory(guild_id, user_id, interaction, tone_shift)
 
     except Exception as e:
         print("API Error:", e)
         await message.channel.send("Yu Zhong is... disturbed. (API error)")
+
 
 @client.event
 async def on_member_join(member):
     if member.bot:
         return
 
-    prompt = (
-        f"{personality}\n"
-        f"Greet the new user '{member.name}' as Yu Zhong would — charismatic, subtly menacing, and witty. Short and in-character. Don't mention 'Mortal' or 'Yu Zhong'."
-    )
-
+    prompt = f"""{personality}
+Greet the mortal named {member.name} who has entered your domain. Keep it short, mysterious, and charismatic."""
     try:
         response = bard.get_answer(prompt)
         greeting = response.get("content", "").strip()
-
         channel = next((ch for ch in member.guild.text_channels if ch.permissions_for(member.guild.me).send_messages), None)
         if channel:
             await channel.send(greeting)
     except Exception as e:
-        print("Greeting Error:", str(e))
+        print("Greeting Error:", e)
+
 
 client.run(DISCORD_TOKEN)
