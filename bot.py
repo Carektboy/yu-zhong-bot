@@ -81,7 +81,7 @@ async def on_message(message):
 
     # Prepare memory-based prompt
     memory = user_memory.get(user_id, "")
-    prompt = f"{personality}\n\nYour past interaction with mortal {message.author.name}:\n{memory}\n\nMortal: {user_input}\nYu Zhong:"
+    prompt = f"{personality}\n\nYour past interaction with mortal {message.author.name}:\n{memory}\n\n:"
 
     try:
         response = bard.get_answer(prompt)
