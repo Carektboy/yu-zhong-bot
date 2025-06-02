@@ -134,5 +134,4 @@ Yu Zhong:"""
 
 
 
-load_profiles()
 client.run(DISCORD_TOKEN)
