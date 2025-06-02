@@ -83,6 +83,12 @@ async def on_message(message):
         return # Stop processing after handling !imagine
 
   # Memory-based dynamic prompt
+    user_id = str(message.author.id)
+    user_input = message.content.strip()
+    
+    if not user_input:
+        return
+
     memory = user_memory.get(user_id, "")
     dynamic_prompt = f"{personality}\nHistory with mortal {message.author.name}:\n{memory}\n\nMortal: {user_input}\nYu Zhong:"
 
@@ -91,8 +97,9 @@ async def on_message(message):
         answer = response.get("content", "").strip()
 
         # Save user interaction to memory
-        interaction_log = f"{message.author.name} said: {user_input} | Yu Zhong replied: {answer}"
-        user_memory[user_id] = interaction_log[-1000:]  # Limit memory per user
+        log_entry = f"Mortal: {user_input} | Yu Zhong: {answer}\n"
+        memory = memory + log_entry
+        user_memory[user_id] = memory[-1500:]  # Limit memory per user
 
         with open("user_memory.json", "w", encoding="utf-8") as f:
             json.dump(user_memory, f, indent=2)
