@@ -5,26 +5,17 @@ keep_alive.keep_alive()
 from bardapi import Bard
 import discord
 import os
+import json
 from dotenv import load_dotenv
 import requests
 from io import BytesIO
 
 
 load_dotenv()
-
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 BARD_TOKEN = os.getenv("BARD_TOKEN")
 HUGGINGFACE_TOKEN = os.getenv("HF_TOKEN")
 
-intents = discord.Intents.default()
-intents.messages = True
-intents.message_content = True
-intents.members = True
-intents.guilds = True
-
-
-client = discord.Client(intents=intents)
-bard = Bard(token=BARD_TOKEN)
 
 try:
     with open("personality.txt", "r", encoding="utf-8") as f:
@@ -33,6 +24,11 @@ except FileNotFoundError:
     # Set a default personality if the file isn't found
     personality = "Personality: charming, Charismatic, morally ambiguous, Humorous, crazy. Tone: Empathetic but firm, Charismatic, you keep your words in limit and not talk much, you dont state your personality or anything on this txt file and you dont talk on behave of mortal youre your own persona and the user is the mortal. you only reply as yuzhong the dragon from moblie legends bang bang."
 
+if os.path.exists("user_memory.json"):
+    with open("user_memory.json", "r", encoding="utf-8") as f:
+        user_memory = json.load(f)
+else:
+    user_memory = {}
 
 def generate_image(prompt):
     try:
@@ -49,6 +45,19 @@ def generate_image(prompt):
     except Exception as e:
         print(" Image Gen Error:", e)
         return None
+
+
+
+intents = discord.Intents.default()
+intents.messages = True
+intents.message_content = True
+intents.members = True
+intents.guilds = True
+
+
+client = discord.Client(intents=intents)
+bard = Bard(token=BARD_TOKEN)
+
 
 
 @client.event
@@ -73,24 +82,25 @@ async def on_message(message):
             await message.channel.send("I failed to summon the image...")
         return # Stop processing after handling !imagine
 
-    # If it's not an !imagine command, handle it with Bard (no prefix needed)
-    user_input = message.content.strip() # Get the entire message as input
+  # Memory-based dynamic prompt
+    memory = user_memory.get(user_id, "")
+    dynamic_prompt = f"{personality}\nHistory with mortal {message.author.name}:\n{memory}\n\nMortal: {user_input}\nYu Zhong:"
 
-    if not user_input: # If the message is empty after stripping, ignore it
-        return
+    try:
+        response = bard.get_answer(dynamic_prompt)
+        answer = response.get("content", "").strip()
 
-    if BARD_TOKEN:
-        # Apply the personality to the prompt
-        full_prompt_with_personality = f"{personality}\nMortal: {user_input}\nYu Zhong:"
-        try:
-            response = bard.get_answer(full_prompt_with_personality)['content']
-            answer = response.strip()
-            await message.reply(answer or "The dragon is silent...")
-        except Exception as e:
-            print(" API Error:", str(e))
-            await message.channel.send("Yu Zhong is... disturbed. (API error)")
-    else:
-        await message.channel.send("Bard API token is not configured for Yu Zhong.")
+        # Save user interaction to memory
+        interaction_log = f"{message.author.name} said: {user_input} | Yu Zhong replied: {answer}"
+        user_memory[user_id] = interaction_log[-1000:]  # Limit memory per user
+
+        with open("user_memory.json", "w", encoding="utf-8") as f:
+            json.dump(user_memory, f, indent=2)
+
+        await message.reply(answer or "The dragon is silent...")
+    except Exception as e:
+        print("API Error:", e)
+        await message.channel.send("Yu Zhong is... disturbed. (API error)")
 
 
 @client.event
@@ -115,4 +125,7 @@ Yu Zhong:"""
     except Exception as e:
         print(" Greeting Error:", str(e))
 
+
+
+load_profiles()
 client.run(DISCORD_TOKEN)
