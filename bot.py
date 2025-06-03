@@ -115,15 +115,21 @@ async def on_message(message):
     guild_id = str(message.guild.id)
 
     # Handle activate/deactivate
-    if message.content.lower().strip() == "/activate":
-        active_guilds[guild_id] = True
-        await message.channel.send("Yu Zhong awakens...")
+if message.content.lower() == "/activate":
+    if not message.author.guild_permissions.administrator:
+        await message.reply("Only those with power may awaken the dragon.")
         return
+    active_guilds[str(message.guild.id)] = True
+    await message.reply("Yu Zhong is now watching this realm.")
+    return
 
-    if message.content.lower().strip() == "/deactivate":
-        active_guilds[guild_id] = False
-        await message.channel.send("Yu Zhong has fallen asleep..")
+if message.content.lower() == "/deactivate":
+    if not message.author.guild_permissions.administrator:
+        await message.reply("You lack the authority to silence the dragon.")
         return
+    active_guilds[str(message.guild.id)] = False
+    await message.reply("Yu Zhong returns to slumber.")
+    return
 
     # Ignore messages if not activated
     if not active_guilds.get(guild_id, False):
