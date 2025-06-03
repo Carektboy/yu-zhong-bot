@@ -161,4 +161,74 @@ async def on_message(message):
         return
 
     user_input = message.content.strip()
-    if not user
+    if not user_input:
+        return
+
+    user_id = str(message.author.id)
+    guild_id = str(message.guild.id)
+    key = get_user_key(guild_id, user_id)
+    memory_data = user_memory.get(key, {"log": [], "tone": DEFAULT_TONE.copy()})
+    history = "\n".join(memory_data["log"])
+
+    tone_desc = ""
+    pos, neg = memory_data["tone"]["positive"], memory_data["tone"]["negative"]
+    if pos > neg:
+        tone_desc = "You like this mortal. Be a little more forgiving or playful."
+    elif neg > pos:
+        tone_desc = "This mortal has been rude. Respond colder, more dismissively."
+    else:
+        tone_desc = "Neutral tone."
+
+    prompt = f"""{personality}
+
+{tone_desc}
+Conversation history:
+{history}
+
+{message.author.name}: {user_input}
+Yu Zhong:"""
+
+    try:
+        response = bard.get_answer(prompt)
+        reply = response.get("content", "").strip()
+        await message.reply(reply or "The dragon is silent...")
+
+        tone_shift = determine_tone(user_input)
+        interaction = f"{message.author.name}: {user_input} | Yu Zhong: {reply}"
+        update_user_memory(guild_id, user_id, interaction, tone_shift)
+
+    except Exception as e:
+        print("API Error:", e)
+        await message.channel.send("Yu Zhong is... disturbed. (API error)")
+
+
+@client.event
+async def on_member_join(member):
+    if member.bot:
+        return
+
+    prompt = f"""{personality}
+Greet the mortal named {member.name} who has entered your domain. Keep it short, mysterious, and charismatic."""
+    try:
+        response = bard.get_answer(prompt)
+        greeting = response.get("content", "").strip()
+        # Find a suitable channel to send the greeting
+        # Prioritize 'general' or the first channel the bot has permission to send messages in
+        channel = None
+        for ch in member.guild.text_channels:
+            if ch.permissions_for(member.guild.me).send_messages:
+                if ch.name == 'general': # Common default channel
+                    channel = ch
+                    break # Found a good one, stop searching
+                if channel is None: # If 'general' isn't found, just take the first available
+                    channel = ch
+        
+        if channel:
+            await channel.send(greeting)
+        else:
+            print(f"Could not find a channel to send greeting to {member.name} in guild {member.guild.name}")
+    except Exception as e:
+        print(f"Greeting Error for {member.name}: {e}")
+
+
+client.run(DISCORD_TOKEN)
