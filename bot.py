@@ -23,13 +23,17 @@ try:
         personality = f.read()
 except FileNotFoundError:
     personality = "You are Yu Zhong from Mobile Legends. You're charismatic, darkly witty, slightly unhinged, and speak confidently in short phrases. You respond like a user, not like a bot."
+ 
 
+active_guilds = {}
 # Load or initialize memory
 if os.path.exists(MEMORY_FILE):
     with open(MEMORY_FILE, "r", encoding="utf-8") as f:
         user_memory = json.load(f)
 else:
     user_memory = {}
+   
+
 
 intents = discord.Intents.default()
 intents.messages = True
@@ -106,6 +110,23 @@ async def on_ready():
 @client.event
 async def on_message(message):
     if message.author.bot:
+        return
+
+    guild_id = str(message.guild.id)
+
+    # Handle activate/deactivate
+    if message.content.lower().strip() == "/activate":
+        active_guilds[guild_id] = True
+        await message.channel.send("Yu Zhong awakens...")
+        return
+
+    if message.content.lower().strip() == "/deactivate":
+        active_guilds[guild_id] = False
+        await message.channel.send("Yu Zhong has fallen asleep..")
+        return
+
+    # Ignore messages if not activated
+    if not active_guilds.get(guild_id, False):
         return
 
     if message.content.startswith("!imagine "):
