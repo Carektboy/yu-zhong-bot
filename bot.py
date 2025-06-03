@@ -129,7 +129,7 @@ async def on_message(message):
     guild_id = str(message.guild.id)
 
     # Handle activate/deactivate
-    if message.content.lower() == "/activate":
+    if message.content.lower() == "/arise":
         if not message.author.guild_permissions.administrator:
             await message.reply("Only those with power may awaken the dragon.")
             return
@@ -137,7 +137,7 @@ async def on_message(message):
         await message.reply("Yu Zhong is now watching this realm.")
         return
 
-    if message.content.lower() == "/deactivate":
+    if message.content.lower() == "/stop":
         if not message.author.guild_permissions.administrator:
             await message.reply("You lack the authority to silence the dragon.")
             return
