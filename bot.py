@@ -14,7 +14,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 BARD_TOKEN = os.getenv("BARD_TOKEN")
 HUGGINGFACE_TOKEN = os.getenv("HF_TOKEN")
 
-MAX_MEMORY_PER_USER = 500000  # bytes limit per user per guild
+MAX_MEMORY_PER_USER = 500000 # bytes limit per user per guild
 MEMORY_FILE = "user_memory.json"
 DEFAULT_TONE = {"positive": 0, "negative": 0}
 
@@ -23,7 +23,7 @@ try:
         personality = f.read()
 except FileNotFoundError:
     personality = "You are Yu Zhong from Mobile Legends. You're charismatic, darkly witty, slightly unhinged, and speak confidently in short phrases. You respond like a user, not like a bot."
- 
+
 
 active_guilds = {}
 # Load or initialize memory
@@ -32,7 +32,6 @@ if os.path.exists(MEMORY_FILE):
         user_memory = json.load(f)
 else:
     user_memory = {}
-   
 
 
 intents = discord.Intents.default()
@@ -53,12 +52,27 @@ def generate_image(prompt):
             json={"inputs": prompt}
         )
         if response.status_code == 200:
-            return BytesIO(response.content)
-        else:
-            print("Hugging Face Error:", response.text)
+            # Check if the content type is image before returning
+            content_type = response.headers.get('Content-Type', '')
+            if 'image' in content_type:
+                return BytesIO(response.content)
+            else:
+                print(f"Hugging Face Error: Response was not an image (Content-Type: {content_type}). Status Code: {response.status_code}, Response: {response.text}")
+                return None
+        elif response.status_code == 503: # Common for model loading
+            print(f"Hugging Face Error (503 Service Unavailable): Model might be loading. Try again shortly. Response: {response.text}")
             return None
+        elif response.status_code == 429: # Rate limit
+            print(f"Hugging Face Error (429 Too Many Requests): You are being rate-limited. Wait before trying again. Response: {response.text}")
+            return None
+        else:
+            print(f"Hugging Face Error: Status Code: {response.status_code}, Response: {response.text}")
+            return None
+    except requests.exceptions.RequestException as e:
+        print(f"Network or Request Error during image generation: {e}")
+        return None
     except Exception as e:
-        print("Image Gen Error:", e)
+        print(f"Unexpected Error during image generation: {e}")
         return None
 
 
@@ -115,21 +129,21 @@ async def on_message(message):
     guild_id = str(message.guild.id)
 
     # Handle activate/deactivate
-if message.content.lower() == "/activate":
-    if not message.author.guild_permissions.administrator:
-        await message.reply("Only those with power may awaken the dragon.")
+    if message.content.lower() == "/activate":
+        if not message.author.guild_permissions.administrator:
+            await message.reply("Only those with power may awaken the dragon.")
+            return
+        active_guilds[str(message.guild.id)] = True
+        await message.reply("Yu Zhong is now watching this realm.")
         return
-    active_guilds[str(message.guild.id)] = True
-    await message.reply("Yu Zhong is now watching this realm.")
-    return
 
-if message.content.lower() == "/deactivate":
-    if not message.author.guild_permissions.administrator:
-        await message.reply("You lack the authority to silence the dragon.")
+    if message.content.lower() == "/deactivate":
+        if not message.author.guild_permissions.administrator:
+            await message.reply("You lack the authority to silence the dragon.")
+            return
+        active_guilds[str(message.guild.id)] = False
+        await message.reply("Yu Zhong returns to slumber.")
         return
-    active_guilds[str(message.guild.id)] = False
-    await message.reply("Yu Zhong returns to slumber.")
-    return
 
     # Ignore messages if not activated
     if not active_guilds.get(guild_id, False):
@@ -147,62 +161,4 @@ if message.content.lower() == "/deactivate":
         return
 
     user_input = message.content.strip()
-    if not user_input:
-        return
-
-    user_id = str(message.author.id)
-    guild_id = str(message.guild.id)
-    key = get_user_key(guild_id, user_id)
-    memory_data = user_memory.get(key, {"log": [], "tone": DEFAULT_TONE.copy()})
-    history = "\n".join(memory_data["log"])
-
-    tone_desc = ""
-    pos, neg = memory_data["tone"]["positive"], memory_data["tone"]["negative"]
-    if pos > neg:
-        tone_desc = "You like this mortal. Be a little more forgiving or playful."
-    elif neg > pos:
-        tone_desc = "This mortal has been rude. Respond colder, more dismissively."
-    else:
-        tone_desc = "Neutral tone."
-
-    prompt = f"""{personality}
-
-{tone_desc}
-Conversation history:
-{history}
-
-{message.author.name}: {user_input}
-Yu Zhong:"""
-
-    try:
-        response = bard.get_answer(prompt)
-        reply = response.get("content", "").strip()
-        await message.reply(reply or "The dragon is silent...")
-
-        tone_shift = determine_tone(user_input)
-        interaction = f"{message.author.name}: {user_input} | Yu Zhong: {reply}"
-        update_user_memory(guild_id, user_id, interaction, tone_shift)
-
-    except Exception as e:
-        print("API Error:", e)
-        await message.channel.send("Yu Zhong is... disturbed. (API error)")
-
-
-@client.event
-async def on_member_join(member):
-    if member.bot:
-        return
-
-    prompt = f"""{personality}
-Greet the mortal named {member.name} who has entered your domain. Keep it short, mysterious, and charismatic."""
-    try:
-        response = bard.get_answer(prompt)
-        greeting = response.get("content", "").strip()
-        channel = next((ch for ch in member.guild.text_channels if ch.permissions_for(member.guild.me).send_messages), None)
-        if channel:
-            await channel.send(greeting)
-    except Exception as e:
-        print("Greeting Error:", e)
-
-
-client.run(DISCORD_TOKEN)
+    if not user
