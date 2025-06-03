@@ -142,7 +142,7 @@ async def on_message(message):
             await message.reply("You lack the authority to silence the dragon.")
             return
         active_guilds[str(message.guild.id)] = False
-        await message.reply("Yu Zhong returns to slumber.")
+        await message.reply("Dragon falls asleep")
         return
 
     # Ignore messages if not activated
@@ -151,13 +151,13 @@ async def on_message(message):
 
     if message.content.startswith("!imagine "):
         prompt = message.content[len("!imagine "):].strip()
-        await message.channel.send("🎨 Summoning image from the void...")
+        await message.channel.send(" Summoning image.")
         image_bytes = generate_image(prompt)
         if image_bytes:
             file = discord.File(image_bytes, filename="yu_zhong_creation.png")
             await message.channel.send(file=file)
         else:
-            await message.channel.send("I failed to summon the image...")
+            await message.channel.send("I failed to summon the image (lacks mana) ")
         return
 
     user_input = message.content.strip()
@@ -199,7 +199,7 @@ Yu Zhong:"""
 
     except Exception as e:
         print("API Error:", e)
-        await message.channel.send("Yu Zhong is... disturbed. (API error)")
+        await message.channel.send("Slow down. (Skills On Cooldown)")
 
 
 @client.event
