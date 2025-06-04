@@ -45,16 +45,26 @@ bard = Bard(token=BARD_TOKEN)
 
 
 def generate_image(prompt):
+    print(f"DEBUG: generate_image called with prompt: '{prompt}'") # NEW
     try:
+        headers = {"Authorization": f"Bearer {HUGGINGFACE_TOKEN}"}
+        print(f"DEBUG: Hugging Face API request headers: {headers}") # NEW
+        print(f"DEBUG: Sending request to Hugging Face API for prompt: {prompt}") # NEW
+
         response = requests.post(
             "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2",
-            headers={"Authorization": f"Bearer {HUGGINGFACE_TOKEN}"},
+            headers=headers,
             json={"inputs": prompt}
         )
+
+        print(f"DEBUG: Hugging Face API Response Status Code: {response.status_code}") # NEW
+        print(f"DEBUG: Hugging Face API Response Content-Type: {response.headers.get('Content-Type', '')}") # NEW
+        print(f"DEBUG: Hugging Face API Response Text: {response.text}") # NEW - Be careful with sensitive info if you print full responses for other APIs
+
         if response.status_code == 200:
-            # Check if the content type is image before returning
             content_type = response.headers.get('Content-Type', '')
             if 'image' in content_type:
+                print("DEBUG: Image successfully received from Hugging Face.") # NEW
                 return BytesIO(response.content)
             else:
                 print(f"Hugging Face Error: Response was not an image (Content-Type: {content_type}). Status Code: {response.status_code}, Response: {response.text}")
@@ -66,13 +76,13 @@ def generate_image(prompt):
             print(f"Hugging Face Error (429 Too Many Requests): You are being rate-limited. Wait before trying again. Response: {response.text}")
             return None
         else:
-            print(f"Hugging Face Error: Status Code: {response.status_code}, Response: {response.text}")
+            print(f"Hugging Face Error: Unhandled Status Code: {response.status_code}, Response: {response.text}") # MODIFIED
             return None
     except requests.exceptions.RequestException as e:
-        print(f"Network or Request Error during image generation: {e}")
+        print(f"NETWORK/REQUEST ERROR: during image generation: {e}") # MODIFIED
         return None
     except Exception as e:
-        print(f"Unexpected Error during image generation: {e}")
+        print(f"UNEXPECTED ERROR: during image generation: {e}") # MODIFIED
         return None
 
 
