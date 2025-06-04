@@ -1,6 +1,10 @@
 import keep_alive
 keep_alive.keep_alive()
 
+import logging
+logging.basicConfig(level=logging.INFO)
+
+
 import os
 import json
 import discord
@@ -12,7 +16,7 @@ from io import BytesIO
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 BARD_TOKEN = os.getenv("BARD_TOKEN")
-HUGGINGFACE_TOKEN = os.getenv("HF_TOKEN")
+SHAPESINC_API_KEY = os.getenv("SHAPESINC_API_KEY")
 
 MAX_MEMORY_PER_USER = 500000 # bytes limit per user per guild
 MEMORY_FILE = "user_memory.json"
@@ -45,62 +49,39 @@ bard = Bard(token=BARD_TOKEN)
 
 
 def generate_image(prompt):
-    print(f"DEBUG: generate_image called with prompt: '{prompt}'") # NEW
     try:
-        headers = {"Authorization": f"Bearer {HUGGINGFACE_TOKEN}"}
-        print(f"DEBUG: Hugging Face API request headers: {headers}") # NEW
-        print(f"DEBUG: Sending request to Hugging Face API for prompt: {prompt}") # NEW
-
+        headers = {"Authorization": f"Bearer {SHAPEINC_API_KEY}"}
         response = requests.post(
-            "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2",
+            "https://api.shapes.inc/v1/generate",
             headers=headers,
-            json={"inputs": prompt}
+            json={"prompt": prompt}
         )
-
-        print(f"DEBUG: Hugging Face API Response Status Code: {response.status_code}") # NEW
-        print(f"DEBUG: Hugging Face API Response Content-Type: {response.headers.get('Content-Type', '')}") # NEW
-        print(f"DEBUG: Hugging Face API Response Text: {response.text}") # NEW - Be careful with sensitive info if you print full responses for other APIs
-
         if response.status_code == 200:
-            content_type = response.headers.get('Content-Type', '')
-            if 'image' in content_type:
-                print("DEBUG: Image successfully received from Hugging Face.") # NEW
-                return BytesIO(response.content)
-            else:
-                print(f"Hugging Face Error: Response was not an image (Content-Type: {content_type}). Status Code: {response.status_code}, Response: {response.text}")
-                return None
-        elif response.status_code == 503: # Common for model loading
-            print(f"Hugging Face Error (503 Service Unavailable): Model might be loading. Try again shortly. Response: {response.text}")
-            return None
-        elif response.status_code == 429: # Rate limit
-            print(f"Hugging Face Error (429 Too Many Requests): You are being rate-limited. Wait before trying again. Response: {response.text}")
-            return None
-        else:
-            print(f"Hugging Face Error: Unhandled Status Code: {response.status_code}, Response: {response.text}") # MODIFIED
-            return None
-    except requests.exceptions.RequestException as e:
-        print(f"NETWORK/REQUEST ERROR: during image generation: {e}") # MODIFIED
-        return None
+            data = response.json()
+            image_url = data.get("image_url")
+            if image_url:
+                image_bytes = requests.get(image_url).content
+                return BytesIO(image_bytes)
+        logging.info("Shapes Inc image generation failed:", response.text)
     except Exception as e:
-        print(f"UNEXPECTED ERROR: during image generation: {e}") # MODIFIED
-        return None
+        logging.info("Shapes Inc image error:", e)
+    return None
 
 
 
-
-def describe_image(file_url):
+def describe_image_with_shapesinc(image_url):
     try:
-        image_bytes = requests.get(file_url).content
         response = requests.post(
-            "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-base",
-            headers={"Authorization": f"Bearer {HUGGINGFACE_TOKEN}"},
-            files={"file": image_bytes}
+            "https://api.shapes.inc/v1/describe",
+            headers={"Authorization": f"Bearer {SHAPEINC_API_KEY}"},
+            json={"image_url": image_url}
         )
-        result = response.json()
-        return result.get("generated_text", None)
+        if response.status_code == 200:
+            return response.json().get("description")
+        logging.info("Shapes Inc description failed:", response.text)
     except Exception as e:
-        print("Image Caption Error:", e)
-        return None
+        logging.info("Shapes Inc describe error:", e)
+    return None
 
 
 
@@ -147,7 +128,7 @@ def determine_tone(user_text):
 
 @client.event
 async def on_ready():
-    print("Yu Zhong has awakened...")
+    logging.info("Yu Zhong has awakened...")
 
 
 @client.event
@@ -201,19 +182,12 @@ async def on_message(message):
         for attachment in message.attachments:
             if attachment.content_type and attachment.content_type.startswith("image/"):
                 await message.channel.send("Inspecting your offering...")
-                description = describe_image(attachment.url)
+                description = describe_image_with_shapesinc(attachment.url)
                 if description:
                     user_input = f"The mortal sent an image. It appears to be: {description}"
                 else:
-                    user_input = "The mortal sent an image, but its essence eludes me."
+                    user_input = "The mortal sent an image, but even dragons cannot comprehend it."
                 break
-        else:
-            user_input = message.content.strip()
-    else:
-        user_input = message.content.strip()
-
-    if not user_input:
-        return
         
         
 
@@ -249,7 +223,7 @@ Yu Zhong:"""
         update_user_memory(guild_id, user_id, interaction, tone_shift)
 
     except Exception as e:
-        print("API Error:", e)
+        logging.info("API Error:", e)
         await message.channel.send("Slow down. (Skills On Cooldown)")
 
 
@@ -277,9 +251,9 @@ Greet the mortal named {member.name} who has entered your domain. Keep it short,
         if channel:
             await channel.send(greeting)
         else:
-            print(f"Could not find a channel to send greeting to {member.name} in guild {member.guild.name}")
+            logging.info(f"Could not find a channel to send greeting to {member.name} in guild {member.guild.name}")
     except Exception as e:
-        print(f"Greeting Error for {member.name}: {e}")
+        logging.info(f"Greeting Error for {member.name}: {e}")
 
 
 client.run(DISCORD_TOKEN)
