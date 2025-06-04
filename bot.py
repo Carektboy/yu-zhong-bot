@@ -86,6 +86,25 @@ def generate_image(prompt):
         return None
 
 
+
+
+def describe_image(file_url):
+    try:
+        image_bytes = requests.get(file_url).content
+        response = requests.post(
+            "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-base",
+            headers={"Authorization": f"Bearer {HUGGINGFACE_TOKEN}"},
+            files={"file": image_bytes}
+        )
+        result = response.json()
+        return result.get("generated_text", None)
+    except Exception as e:
+        print("Image Caption Error:", e)
+        return None
+
+
+
+
 def get_user_key(guild_id, user_id):
     return f"{guild_id}_{user_id}"
 
@@ -136,6 +155,8 @@ async def on_message(message):
     if message.author.bot:
         return
 
+    
+    user_id = str(message.author.id)
     guild_id = str(message.guild.id)
 
     # Handle activate/deactivate
@@ -174,8 +195,28 @@ async def on_message(message):
     if not user_input:
         return
 
-    user_id = str(message.author.id)
-    guild_id = str(message.guild.id)
+    
+
+    if message.attachments:
+        for attachment in message.attachments:
+            if attachment.content_type and attachment.content_type.startswith("image/"):
+                await message.channel.send("Inspecting your offering...")
+                description = describe_image(attachment.url)
+                if description:
+                    user_input = f"The mortal sent an image. It appears to be: {description}"
+                else:
+                    user_input = "The mortal sent an image, but its essence eludes me."
+                break
+        else:
+            user_input = message.content.strip()
+    else:
+        user_input = message.content.strip()
+
+    if not user_input:
+        return
+        
+        
+
     key = get_user_key(guild_id, user_id)
     memory_data = user_memory.get(key, {"log": [], "tone": DEFAULT_TONE.copy()})
     history = "\n".join(memory_data["log"])
