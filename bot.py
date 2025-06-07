@@ -20,8 +20,8 @@ logger = logging.getLogger('YuZhongBot')
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 BARD_TOKEN = os.getenv("BARD_TOKEN")
-# Make sure this environment variable is now EXACTLY "SHAPESINC_API_KEY" in your Render settings
-SHAPESINC_API_KEY = os.getenv("SHAPESINC_API_KEY")
+SHAPESINC_API_KEY = os.getenv("SHAPESINC_API_KEY") # Ensure this is now correctly named!
+SHAPESINC_SHAPE_USERNAME = os.getenv("SHAPESINC_SHAPE_USERNAME", "yuzhong-eqf1") # Default to yuzhong-eqf1, or set in .env
 
 # --- Configuration ---
 MAX_MEMORY_PER_USER_BYTES = 500000
@@ -128,46 +128,12 @@ def determine_tone(user_text: str) -> str | None:
         return "negative"
     return None
 
+# --- NOTE: Removed generate_image_async because Shapes Inc documentation does not provide a direct API for it. ---
+# The !imagine command is listed as a supported command for Shapes themselves, likely handled internally.
+# If you want to explore image generation, you might try prompting the AI through chat/completions
+# to see if it responds with image URLs, but this is not a standard API method.
 async def generate_image_async(prompt: str) -> BytesIO | None:
-    logger.info("Attempting to generate image for prompt: '%s'", prompt)
-    if not SHAPESINC_API_KEY:
-        logger.warning("SHAPESINC_API_KEY is not set. Image generation skipped.")
-        return None
-
-    try:
-        headers = {
-            "Authorization": f"Bearer {SHAPESINC_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        data = {"prompt": prompt}
-
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://api.shapes.inc/v1/shapes/yuzhong-eqf1/infer", # <--- **CHECK THIS URL WITH SHAPESINC DOCS**
-                headers=headers,
-                json=data
-            ) as response:
-                if response.status == 200:
-                    json_data = await response.json()
-                    image_url = json_data.get("image_url")
-                    if image_url:
-                        async with session.get(image_url) as image_response:
-                            if image_response.status == 200:
-                                image_bytes = await image_response.read()
-                                logger.info("Successfully generated and fetched image for prompt: '%s'", prompt)
-                                return BytesIO(image_bytes)
-                            else:
-                                logger.warning("Failed to fetch generated image (status %s): %s", image_response.status, await image_response.text())
-                    else:
-                        logger.warning("No image URL in Shapes Inc response: %s", json_data)
-                else:
-                    logger.warning("Shapes Inc image generation failed (status %s): %s", response.status, await response.text())
-
-    except aiohttp.ClientError as e:
-        logger.error("Shapes Inc image generation network error: %s", e, exc_info=True)
-    except Exception as e:
-        logger.error("Shapes Inc image generation unexpected error: %s", e, exc_info=True)
-
+    logger.warning("Image generation (!imagine) is currently disabled/unsupported via direct API calls based on Shapes Inc documentation.")
     return None
 
 async def describe_image_with_shapesinc_async(image_url: str) -> str | None:
@@ -176,19 +142,43 @@ async def describe_image_with_shapesinc_async(image_url: str) -> str | None:
         logger.warning("SHAPESINC_API_KEY is not set. Image description skipped.")
         return None
 
+    # API Endpoint from Shapes Inc documentation: https://api.shapes.inc/v1/chat/completions
+    API_URL = "https://api.shapes.inc/v1/chat/completions"
+
     try:
+        headers = {
+            "Authorization": f"Bearer {SHAPESINC_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        # Data structure based on Shapes Inc 'API Multimodal Support' documentation
+        data = {
+            "model": f"shapesinc/{SHAPESINC_SHAPE_USERNAME}", # Model format from docs: shapesinc/<shape-username>
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "What's in this image?"},
+                        {"type": "image_url", "image_url": {"url": image_url}}
+                    ]
+                }
+            ]
+        }
+
         async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://api.shapes.inc/v1/describe", # <--- **CHECK THIS URL WITH SHAPESINC DOCS for image description**
-                headers={"Authorization": f"Bearer {SHAPESINC_API_KEY}"},
-                json={"image_url": image_url}
-            ) as response:
+            async with session.post(API_URL, headers=headers, json=data) as response:
                 if response.status == 200:
-                    description = (await response.json()).get("description")
-                    logger.info("Successfully described image: %s...", description[:50])
-                    return description
+                    json_response = await response.json()
+                    # Response format is standard OpenAI-compatible JSON response
+                    description = json_response.get("choices", [{}])[0].get("message", {}).get("content")
+                    if description:
+                        logger.info("Successfully described image: %s...", description[:50])
+                        return description
+                    else:
+                        logger.warning("Shapes Inc description response missing content (expected in choices[0].message.content): %s", json_response)
                 else:
-                    logger.warning("Shapes Inc description failed (status %s): %s", response.status, await response.text())
+                    response_text = await response.text()
+                    logger.warning("Shapes Inc description failed (status %s): %s", response.status, response_text)
+
     except aiohttp.ClientError as e:
         logger.error("Shapes Inc describe network error: %s", e, exc_info=True)
     except Exception as e:
@@ -226,7 +216,8 @@ async def on_ready():
         bard_session = None
 
     if not SHAPESINC_API_KEY:
-        logger.warning("SHAPESINC_API_KEY is not set. Image generation/description features will not function.")
+        logger.warning("SHAPESINC_API_KEY is not set. Image description features will not function.")
+    # Removed warning for image generation as it's now explicitly disabled/unsupported by direct API
 
 @client.event
 async def on_member_join(member: discord.Member):
@@ -317,21 +308,13 @@ async def on_message(message: discord.Message):
         logger.debug("Bot inactive in guild %s. Ignoring message from %s.", message.guild.name, message.author.name)
         return
 
-    # --- Image Generation Command ---
+    # --- Image Generation Command (Now disabled) ---
     if lower_case_content.startswith("!imagine "):
         prompt = message.content[len("!imagine "):].strip()
-        await message.channel.send("Summoning a vision from the depths. This may take a moment...", reference=message)
-        logger.info("User %s requested image for prompt: '%s'", message.author.name, prompt)
-
-        image_bytes = await generate_image_async(prompt)
-        if image_bytes:
-            file = discord.File(image_bytes, filename="yu_zhong_creation.png")
-            await message.channel.send(file=file)
-            logger.info("Sent generated image for prompt: '%s'", prompt)
-        else:
-            await message.channel.send("My arcane powers faltered. The image remains unseen. (Lacks mana)", reference=message)
-            logger.warning("Failed to generate image for prompt: '%s'", prompt)
+        await message.channel.send("My apologies, mortal. While Shapes can generate images, this API integration does not currently support direct image generation via `!imagine`. Try attaching an image for me to describe instead.", reference=message)
+        logger.info("User %s attempted image generation for prompt: '%s' (feature disabled).", message.author.name, prompt)
         return
+
 
     user_input = message.content.strip()
 
@@ -347,6 +330,7 @@ async def on_message(message: discord.Message):
                     user_input = f"{user_input}\n[Image: {description}]".strip()
                     logger.info("Image described: %s...", description[:50])
                 else:
+                    # If description fails, add a fallback for Bard to acknowledge
                     user_input = f"{user_input}\n[Image: Yu Zhong's eyes cannot fully comprehend its essence.]".strip()
                     logger.warning("Could not describe image from %s.", message.author.name)
                 break # Only process the first image attachment
@@ -410,6 +394,6 @@ if __name__ == "__main__":
     if not BARD_TOKEN:
         logger.critical("BARD_TOKEN is not set. Bard API will not function.")
     if not SHAPESINC_API_KEY:
-        logger.warning("SHAPESINC_API_KEY is not set. Image generation/description features will not function.")
+        logger.warning("SHAPESINC_API_KEY is not set. Image description features will not function.")
 
     client.run(DISCORD_TOKEN)
