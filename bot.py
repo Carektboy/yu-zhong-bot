@@ -161,4 +161,12 @@ def prune_memory(entries: list[str]) -> list[str]:
     logger.debug(f"Memory pruned. Current size: {current_size} bytes, entries: {len(entries)}")
     return entries
 
+
+@client.event
+async def on_ready():
+    logger.info(f"Yu Zhong is online as {client.user} and ready to dominate.")
+
+if __name__ == "__main__":
+    client.run(DISCORD_TOKEN)
+
 # --- THIS
