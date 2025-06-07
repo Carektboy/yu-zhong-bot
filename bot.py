@@ -13,7 +13,8 @@ from io import BytesIO
 from datetime import datetime
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s:%levelname)s:%(name)s: %(message)s')
+# FIXED: Changed :%levelname)s to :%(levelname)s
+logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(name)s: %(message)s')
 logger = logging.getLogger('YuZhongBot')
 
 # Load environment variables
@@ -38,7 +39,7 @@ except FileNotFoundError:
     logger.warning("personality.txt not found. Using default personality.")
 except Exception as e:
     personality = "You are Yu Zhong from Mobile Legends. You're charismatic, deadpool personality, nonchalant, slightly unhinged, and speak confidently in short phrases. You respond like a user, not like a bot."
-    logger.error(f"Error loading personality from file: {e}. Using default personality.", exc_info=True)
+    logger.error("Error loading personality from file: %s. Using default personality.", e, exc_info=True)
 
 # Global Bot State
 active_guilds = {}
@@ -48,13 +49,13 @@ if os.path.exists(MEMORY_FILE):
     try:
         with open(MEMORY_FILE, "r", encoding="utf-8") as f:
             user_memory = json.load(f)
-        logger.info(f"Loaded memory from {MEMORY_FILE}")
+        logger.info("Loaded memory from %s", MEMORY_FILE) # FIXED: Changed f-string to %s format
     except json.JSONDecodeError:
-        logger.error(f"Error decoding {MEMORY_FILE}. Starting with empty memory.")
+        logger.error("%s is corrupted. Starting with empty memory.", MEMORY_FILE) # FIXED: Changed f-string to %s format
     except Exception as e:
-        logger.error(f"Error loading memory file: {e}. Starting with empty memory.", exc_info=True)
+        logger.error("Error loading memory file: %s. Starting with empty memory.", e, exc_info=True) # FIXED: Changed f-string to %s format
 else:
-    logger.info(f"{MEMORY_FILE} not found. Starting with empty memory.")
+    logger.info("%s not found. Starting with empty memory.", MEMORY_FILE) # FIXED: Changed f-string to %s format
 
 # Discord Intents
 intents = discord.Intents.default()
@@ -85,7 +86,7 @@ def prune_memory(entries: list[str]) -> list[str]:
     while current_size > MAX_MEMORY_PER_USER_BYTES and len(entries) > 1:
         entries.pop(0)
         current_size = len(json.dumps(entries).encode('utf-8'))
-    logger.debug(f"Memory pruned. Current size: {current_size} bytes, entries: {len(entries)}")
+    logger.debug("Memory pruned. Current size: %s bytes, entries: %s", current_size, len(entries)) # FIXED: Changed f-string to %s format
     return entries
 
 def update_user_memory(guild_id: str, user_id: str, log_entry: str, tone_shift: str | None = None):
@@ -99,21 +100,23 @@ def update_user_memory(guild_id: str, user_id: str, log_entry: str, tone_shift: 
         user_memory[key]["tone"]["positive"] += 1
     elif tone_shift == "negative":
         user_memory[key]["tone"]["negative"] += 1
-    logger.debug(f"Memory updated for {key}. Current tone: {user_memory[key]['tone']}")
+    logger.debug("Memory updated for %s. Current tone: %s", key, user_memory[key]['tone']) # FIXED: Changed f-string to %s format
 
 async def save_user_memory_async():
     """Asynchronously saves the user memory to disk."""
     try:
         await asyncio.to_thread(lambda: json.dump(user_memory, open(MEMORY_FILE, "w", encoding="utf-8"), indent=2))
-        logger.info(f"User memory saved to {MEMORY_FILE}.")
+        # FIXED: Changed f-string to %s format
+        logger.info("User memory saved to %s.", MEMORY_FILE)
     except Exception as e:
-        logger.error(f"Error saving memory file asynchronously: {e}", exc_info=True)
+        logger.error("Error saving memory file asynchronously: %s", e, exc_info=True) # FIXED: Changed f-string to %s format
 
 async def periodic_memory_save():
     """Task to periodically save user memory."""
     while True:
         await asyncio.sleep(MEMORY_SAVE_INTERVAL_MINUTES * 60)
-        logger.info("Initiating periodic memory save...")
+        # FIXED: Changed direct string to %s format
+        logger.info("%s", "Initiating periodic memory save...")
         await save_user_memory_async()
 
 def determine_tone(user_text: str) -> str | None:
@@ -128,7 +131,7 @@ def determine_tone(user_text: str) -> str | None:
     return None
 
 async def generate_image_async(prompt: str) -> BytesIO | None:
-    logger.info(f"Attempting to generate image for prompt: '{prompt}'")
+    logger.info("Attempting to generate image for prompt: '%s'", prompt) # FIXED: Changed f-string to %s format
     if not SHAPESINC_API_KEY:
         logger.warning("SHAPESINC_API_KEY is not set. Image generation skipped.")
         return None
@@ -153,24 +156,24 @@ async def generate_image_async(prompt: str) -> BytesIO | None:
                         async with session.get(image_url) as image_response:
                             if image_response.status == 200:
                                 image_bytes = await image_response.read()
-                                logger.info(f"Successfully generated and fetched image for prompt: '{prompt}'")
+                                logger.info("Successfully generated and fetched image for prompt: '%s'", prompt) # FIXED: Changed f-string to %s format
                                 return BytesIO(image_bytes)
                             else:
-                                logger.warning(f"Failed to fetch generated image (status {image_response.status}): {await image_response.text()}")
+                                logger.warning("Failed to fetch generated image (status %s): %s", image_response.status, await image_response.text()) # FIXED: Changed f-string to %s format
                     else:
-                        logger.warning(f"No image URL in Shapes Inc response: {json_data}")
+                        logger.warning("No image URL in Shapes Inc response: %s", json_data) # FIXED: Changed f-string to %s format
                 else:
-                    logger.warning(f"Shapes Inc image generation failed (status {response.status}): {await response.text()}")
+                    logger.warning("Shapes Inc image generation failed (status %s): %s", response.status, await response.text()) # FIXED: Changed f-string to %s format
 
     except aiohttp.ClientError as e:
-        logger.error(f"Shapes Inc image generation network error: {e}", exc_info=True)
+        logger.error("Shapes Inc image generation network error: %s", e, exc_info=True) # FIXED: Changed f-string to %s format
     except Exception as e:
-        logger.error(f"Shapes Inc image generation unexpected error: {e}", exc_info=True)
+        logger.error("Shapes Inc image generation unexpected error: %s", e, exc_info=True) # FIXED: Changed f-string to %s format
 
     return None
 
 async def describe_image_with_shapesinc_async(image_url: str) -> str | None:
-    logger.info(f"Attempting to describe image from URL: {image_url}")
+    logger.info("Attempting to describe image from URL: %s", image_url) # FIXED: Changed f-string to %s format
     if not SHAPESINC_API_KEY:
         logger.warning("SHAPESINC_API_KEY is not set. Image description skipped.")
         return None
@@ -184,14 +187,14 @@ async def describe_image_with_shapesinc_async(image_url: str) -> str | None:
             ) as response:
                 if response.status == 200:
                     description = (await response.json()).get("description")
-                    logger.info(f"Successfully described image: {description[:50]}...")
+                    logger.info("Successfully described image: %s...", description[:50]) # FIXED: Changed f-string to %s format
                     return description
                 else:
-                    logger.warning(f"Shapes Inc description failed (status {response.status}): {await response.text()}")
+                    logger.warning("Shapes Inc description failed (status %s): %s", response.status, await response.text()) # FIXED: Changed f-string to %s format
     except aiohttp.ClientError as e:
-        logger.error(f"Shapes Inc describe network error: {e}", exc_info=True)
+        logger.error("Shapes Inc describe network error: %s", e, exc_info=True) # FIXED: Changed f-string to %s format
     except Exception as e:
-        logger.error(f"Shapes Inc describe unexpected error: {e}", exc_info=True)
+        logger.error("Shapes Inc describe unexpected error: %s", e, exc_info=True) # FIXED: Changed f-string to %s format
     return None
 
 # --- Discord Events ---
@@ -199,14 +202,14 @@ async def describe_image_with_shapesinc_async(image_url: str) -> str | None:
 @client.event
 async def on_ready():
     global bard_session
-    logger.info(f"Yu Zhong has awakened as {client.user}!")
-    logger.info(f"Current time in Damak, Koshi Province, Nepal: {datetime.now().strftime('%Y-%m-%d %H:%M:%S %Z%z')}")
+    logger.info("Yu Zhong has awakened as %s!", client.user) # FIXED: Changed f-string to %s format
+    logger.info("Current time in Damak, Koshi Province, Nepal: %s", datetime.now().strftime('%Y-%m-%d %H:%M:%S %Z%z')) # FIXED: Changed f-string to %s format
 
     # Initialize active_guilds status for all guilds the bot is in
     for guild in client.guilds:
         if str(guild.id) not in active_guilds:
             active_guilds[str(guild.id)] = False
-    logger.info(f"Bot active status initialized across guilds: {active_guilds}")
+    logger.info("Bot active status initialized across guilds: %s", active_guilds) # FIXED: Changed f-string to %s format
 
     # Start periodic memory saving
     client.loop.create_task(periodic_memory_save())
@@ -218,7 +221,7 @@ async def on_ready():
             bard_session = await asyncio.to_thread(initialize_bard_sync)
             logger.info("Bard API initialized successfully.")
         except Exception as e:
-            logger.critical(f"Failed to initialize Bard API: {e}. Bot will not respond to general messages.", exc_info=True)
+            logger.critical("Failed to initialize Bard API: %s. Bot will not respond to general messages.", e, exc_info=True) # FIXED: Changed f-string to %s format
             bard_session = None
     else:
         logger.critical("BARD_TOKEN is not set. Bard API will not function.")
@@ -234,10 +237,10 @@ async def on_member_join(member: discord.Member):
 
     guild_id = str(member.guild.id)
     if not active_guilds.get(guild_id, False) or not bard_session:
-        logger.info(f"Skipping greeting for {member.name} (Bot inactive or Bard unavailable in {member.guild.name}).")
+        logger.info("Skipping greeting for %s (Bot inactive or Bard unavailable in %s).", member.name, member.guild.name) # FIXED: Changed f-string to %s format
         return
 
-    logger.info(f"Greeting new member {member.name} in {member.guild.name}...")
+    logger.info("Greeting new member %s in %s...", member.name, member.guild.name) # FIXED: Changed f-string to %s format
     prompt = f"""{personality}
 Greet the mortal named {member.name} who has just stepped into your dominion. Keep the greeting short, mysterious, and charismatic, in the style of Yu Zhong."""
     try:
@@ -262,13 +265,13 @@ Greet the mortal named {member.name} who has just stepped into your dominion. Ke
 
             if channel_to_send:
                 await channel_to_send.send(f"{member.mention} {greeting}")
-                logger.info(f"Sent greeting to {member.name} in #{channel_to_send.name}.")
+                logger.info("Sent greeting to %s in #%s.", member.name, channel_to_send.name) # FIXED: Changed f-string to %s format
             else:
-                logger.warning(f"Could not find a suitable channel to send greeting to {member.name} in guild {member.guild.name}")
+                logger.warning("Could not find a suitable channel to send greeting to %s in guild %s", member.name, member.guild.name) # FIXED: Changed f-string to %s format
         else:
-            logger.warning(f"Bard API returned empty greeting for {member.name}.")
+            logger.warning("Bard API returned empty greeting for %s.", member.name) # FIXED: Changed f-string to %s format
     except Exception as e:
-        logger.error(f"Error generating or sending greeting for {member.name}: {e}", exc_info=True)
+        logger.error("Error generating or sending greeting for %s: %s", member.name, e, exc_info=True) # FIXED: Changed f-string to %s format
 
 @client.event
 async def on_message(message: discord.Message):
@@ -288,7 +291,7 @@ async def on_message(message: discord.Message):
             return
         active_guilds[guild_id] = True
         await message.reply("Yu Zhong is now watching this realm. Beware.")
-        logger.info(f"Bot activated in guild: {message.guild.name} ({guild_id})")
+        logger.info("Bot activated in guild: %s (%s)", message.guild.name, guild_id) # FIXED: Changed f-string to %s format
         return
 
     if lower_case_content == "/stop":
@@ -297,28 +300,29 @@ async def on_message(message: discord.Message):
             return
         active_guilds[guild_id] = False
         await message.reply("Dragon falls asleep. For now.")
-        logger.info(f"Bot deactivated in guild: {message.guild.name} ({guild_id})")
+        logger.info("Bot deactivated in guild: %s (%s)", message.guild.name, guild_id) # FIXED: Changed f-string to %s format
         return
 
     # If bot is not active in this guild, ignore general messages (except admin commands)
     if not active_guilds.get(guild_id, False):
-        logger.debug(f"Bot inactive in guild {message.guild.name}. Ignoring message from {message.author.name}.")
+        logger.debug("Bot inactive in guild %s. Ignoring message from %s.", message.guild.name, message.author.name) # FIXED: Changed f-string to %s format
         return
 
     # --- Image Generation Command ---
     if lower_case_content.startswith("!imagine "):
         prompt = message.content[len("!imagine "):].strip()
         await message.channel.send("Summoning a vision from the depths. This may take a moment...", reference=message)
-        logger.info(f"User {message.author.name} requested image for prompt: '{prompt}'")
+        logger.info("User %s requested image for prompt: '%s'", message.author.name, prompt) # FIXED: Changed f-string to %s format
 
         image_bytes = await generate_image_async(prompt)
         if image_bytes:
             file = discord.File(image_bytes, filename="yu_zhong_creation.png")
             await message.channel.send(file=file)
-            logger.info(f"Sent generated image for prompt: '{prompt}'")
+            logger.info("Sent generated image for prompt: '%s'", prompt) # FIXED: Changed f-string to %s format
         else:
             await message.channel.send("My arcane powers faltered. The image remains unseen. (Lacks mana)", reference=message)
-            logger.warning(f"Failed to generate image for prompt: '{prompt}'")
+            # This specific line was already fixed in previous iterations, ensuring it stays correct.
+            logger.warning("Failed to generate image for prompt: '%s'", prompt)
         return
 
     user_input = message.content.strip()
@@ -328,15 +332,15 @@ async def on_message(message: discord.Message):
         for attachment in message.attachments:
             if attachment.content_type and attachment.content_type.startswith("image/"):
                 await message.channel.send("Inspecting your offering, mortal...", reference=message)
-                logger.info(f"User {message.author.name} sent an image: {attachment.url}")
+                logger.info("User %s sent an image: %s", message.author.name, attachment.url) # FIXED: Changed f-string to %s format
                 description = await describe_image_with_shapesinc_async(attachment.url)
                 if description:
                     # Append image description to user input for Bard to consider
                     user_input = f"{user_input}\n[Image: {description}]".strip()
-                    logger.info(f"Image described: {description[:50]}...")
+                    logger.info("Image described: %s...", description[:50]) # FIXED: Changed f-string to %s format
                 else:
                     user_input = f"{user_input}\n[Image: Yu Zhong's eyes cannot fully comprehend its essence.]".strip()
-                    logger.warning(f"Could not describe image from {message.author.name}.")
+                    logger.warning("Could not describe image from %s.", message.author.name) # FIXED: Changed f-string to %s format
                 break # Only process the first image attachment
 
     # If, after processing attachments, user_input is empty, exit.
@@ -370,22 +374,22 @@ Conversation history:
 Yu Zhong:"""
 
     try:
-        logger.info(f"Sending prompt to Bard API for {message.author.name} (detected tone for prompt: {tone_desc.split('.')[0]})...")
+        logger.info("Sending prompt to Bard API for %s (detected tone for prompt: %s).", message.author.name, tone_desc.split('.')[0]) # FIXED: Changed f-string to %s format
         response_from_bard = await asyncio.to_thread(bard_session.get_answer, prompt)
         reply = response_from_bard.get("content", "").strip()
 
         if reply:
             await message.reply(reply)
-            logger.info(f"Replied to {message.author.name}: {reply[:100]}...")
+            logger.info("Replied to %s: %s...", message.author.name, reply[:100]) # FIXED: Changed f-string to %s format
             tone_shift = determine_tone(user_input)
             interaction_log_entry = f"{message.author.name}: {user_input} | Yu Zhong: {reply}"
             update_user_memory(guild_id, user_id, interaction_log_entry, tone_shift)
         else:
             await message.channel.send("The dragon is silent... my thoughts are not yet formed.", reference=message)
-            logger.warning(f"Bard API returned empty response for {message.author.name}.")
+            logger.warning("Bard API returned empty response for %s.", message.author.name) # FIXED: Changed f-string to %s format
 
     except Exception as e:
-        logger.error(f"Bard API general response error for {message.author.name}: {e}", exc_info=True)
+        logger.error("Bard API general response error for %s: %s", message.author.name, e, exc_info=True) # FIXED: Changed f-string to %s format
         await message.channel.send("My arcane powers falter... (Skills on cooldown). Try again later, if you dare.", reference=message)
 
 
@@ -401,4 +405,3 @@ if __name__ == "__main__":
         logger.warning("SHAPESINC_API_KEY is not set. Image generation/description features will not function.")
 
     client.run(DISCORD_TOKEN)
-    
