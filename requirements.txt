@@ -3,3 +3,4 @@ bardapi
 python-dotenv
 requests
 flask
+aiohttp
