@@ -6,6 +6,7 @@ import os
 import json
 import discord
 from discord.ext import commands
+from discord import app_commands # NEW: Import app_commands
 from dotenv import load_dotenv
 import asyncio
 import aiohttp
@@ -19,7 +20,6 @@ logger = logging.getLogger('YuZhongBot')
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 BARD_TOKEN = os.getenv("BARD_TOKEN")
-# SHAPESINC_API_KEY = os.getenv("SHAPESINC_API_KEY") # No longer needed if all image features are off
 
 # --- Configuration ---
 MAX_MEMORY_PER_USER = 500000  # bytes limit per user per guild
@@ -29,11 +29,9 @@ DEFAULT_TONE = {"positive": 0, "negative": 0}
 # Load personality
 try:
     with open("personality.txt", "r", encoding="utf-8") as f:
-        # Read the existing personality and append the new instruction
         personality_base = f.read()
         personality = personality_base + "\n\nDo not generate images or react to image generation requests. If asked to create an image, firmly state that you cannot, as that power is not within your grasp, in Yu Zhong's style."
 except FileNotFoundError:
-    # If personality.txt doesn't exist, use the default and include the instruction
     personality = "You are Yu Zhong from Mobile Legends. You're charismatic, darkly witty, slightly unhinged, and speak confidently in short phrases. You respond like a user, not like a bot. Do not generate images or react to image generation requests. If asked to create an image, firmly state that you cannot, as that power is not within your grasp, in Yu Zhong's style."
     logger.warning("personality.txt not found. Using default personality with image generation constraint.")
 
@@ -89,21 +87,6 @@ def initialize_bard_sync():
     """Synchronous Bard initialization to be run in executor."""
     from bardapi import Bard
     return Bard(token=BARD_TOKEN)
-
-# --- COMMENTED OUT: Asynchronous image generation with aiohttp ---
-# async def generate_image_async(prompt):
-#     logger.info(f"Attempting to generate image for prompt: '{prompt}'")
-#     # ... (removed implementation) ...
-#     return None
-
-# --- COMMENTED OUT: Asynchronous image description with aiohttp ---
-# async def describe_image_with_shapesinc_async(image_url):
-#     logger.info(f"Attempting to describe image from URL: {image_url}")
-#     if not SHAPESINC_API_KEY: # This check would also be removed if SHAPESINC_API_KEY is gone
-#         logger.warning("SHAPESINC_API_KEY is not set. Image description skipped.")
-#         return None
-#     # ... (removed implementation) ...
-#     return None
 
 
 def get_user_key(guild_id, user_id):
@@ -162,51 +145,61 @@ async def on_ready():
         logger.critical(f"Failed to initialize Bard API: {e}. Bot will not respond to general messages.")
         bard_session = None
 
+    # Sync slash commands - IMPORTANT!
     try:
-        await bot.sync_commands()
-        logger.info("Global slash commands synced successfully.")
+        # Use bot.tree.sync() for app_commands
+        await bot.tree.sync() # Sync global commands
+        logger.info("Global slash commands synced successfully via bot.tree.sync().")
+        # For faster testing on a specific server (replace YOUR_TEST_GUILD_ID)
+        # guild_id_for_testing = 123456789012345678 # Replace with your actual test guild ID
+        # guild_obj = discord.Object(id=guild_id_for_testing)
+        # bot.tree.copy_global_to_guild(guild=guild_obj) # Copy global commands to this guild
+        # await bot.tree.sync(guild=guild_obj) # Sync this specific guild
+        # logger.info(f"Slash commands synced to test guild {guild_id_for_testing}.")
     except Exception as e:
         logger.error(f"Failed to sync slash commands: {e}")
 
 # --- Application Commands (Slash Commands) ---
 
-@bot.slash_command(name="arise", description="Awakens Yu Zhong in this realm.")
-@commands.has_permissions(administrator=True)
-async def arise(ctx: discord.ApplicationContext):
-    guild_id = str(ctx.guild.id)
+@bot.tree.command(name="arise", description="Awakens Yu Zhong in this realm.") # CHANGED: from bot.slash_command
+@app_commands.checks.has_permissions(administrator=True) # CHANGED: decorator for app_commands
+async def arise(interaction: discord.Interaction): # CHANGED: ctx to interaction
+    guild_id = str(interaction.guild.id) # CHANGED: ctx.guild.id to interaction.guild.id
     active_guilds[guild_id] = True
-    await ctx.respond("Yu Zhong is now watching this realm. Beware.")
-    logger.info(f"Bot activated in guild: {ctx.guild.name}")
+    await interaction.response.send_message("Yu Zhong is now watching this realm. Beware.") # CHANGED: ctx.respond to interaction.response.send_message
+    logger.info(f"Bot activated in guild: {interaction.guild.name}") # CHANGED: ctx.guild.name
 
-@bot.slash_command(name="stop", description="Silences Yu Zhong in this realm.")
-@commands.has_permissions(administrator=True)
-async def stop(ctx: discord.ApplicationContext):
-    guild_id = str(ctx.guild.id)
+@bot.tree.command(name="stop", description="Silences Yu Zhong in this realm.") # CHANGED
+@app_commands.checks.has_permissions(administrator=True) # CHANGED
+async def stop(interaction: discord.Interaction): # CHANGED
+    guild_id = str(interaction.guild.id) # CHANGED
     active_guilds[guild_id] = False
-    await ctx.respond("Dragon falls asleep. For now.")
-    logger.info(f"Bot deactivated in guild: {ctx.guild.name}")
+    await interaction.response.send_message("Dragon falls asleep. For now.") # CHANGED
+    logger.info(f"Bot deactivated in guild: {interaction.guild.name}") # CHANGED
 
-@bot.slash_command(name="reset_memory", description="Resets a user's memory (admin only) or your own.")
-@commands.has_permissions(administrator=True)
-async def reset_memory(ctx: discord.ApplicationContext, user: discord.Member = None):
+@bot.tree.command(name="reset_memory", description="Resets a user's memory (admin only) or your own.") # CHANGED
+@app_commands.checks.has_permissions(administrator=True) # CHANGED
+@app_commands.describe(user="The user whose memory to reset (defaults to yourself).") # NEW: for slash command argument description
+async def reset_memory(interaction: discord.Interaction, user: discord.Member = None): # CHANGED
     if user is None:
-        user_to_reset = ctx.author
+        user_to_reset = interaction.user # CHANGED: ctx.author to interaction.user
         reset_message = "Your personal memories of Yu Zhong have been purged. Speak again, mortal, as if for the first time."
     else:
-        if not ctx.author.guild_permissions.administrator:
-            await ctx.respond("You lack the authority to manipulate other mortals' memories.", ephemeral=True)
+        # Check permissions *again* if a specific user is targeted, for clarity/redundancy
+        if not interaction.user.guild_permissions.administrator: # CHANGED: ctx.author to interaction.user
+            await interaction.response.send_message("You lack the authority to manipulate other mortals' memories.", ephemeral=True) # CHANGED
             return
         user_to_reset = user
         reset_message = f"{user.mention}'s memories of Yu Zhong have been purged by command."
 
-    user_key = get_user_key(str(ctx.guild.id), str(user_to_reset.id))
+    user_key = get_user_key(str(interaction.guild.id), str(user_to_reset.id)) # CHANGED
     if user_key in user_memory:
         del user_memory[user_key]
         await save_user_memory_async()
-        logger.info(f"Memory for {user_to_reset.name} ({user_key}) reset by {ctx.author.name}.")
-        await ctx.respond(reset_message)
+        logger.info(f"Memory for {user_to_reset.name} ({user_key}) reset by {interaction.user.name}.") # CHANGED
+        await interaction.response.send_message(reset_message) # CHANGED
     else:
-        await ctx.respond(f"Mortal {user_to_reset.mention} had no memories to purge.", ephemeral=True)
+        await interaction.response.send_message(f"Mortal {user_to_reset.mention} had no memories to purge.", ephemeral=True) # CHANGED
 
 
 # --- on_message handling (for general Bard replies only) ---
@@ -222,41 +215,10 @@ async def on_message(message):
     if not active_guilds.get(guild_id, False):
         return
 
-    # --- COMMENTED OUT: Image Generation Command ---
-    # if message.content.startswith("!imagine "):
-    #     prompt = message.content[len("!imagine "):].strip()
-    #     await message.channel.send("Summoning a vision from the depths. This may take a moment...", reference=message)
-    #     logger.info(f"User {message.author.name} requested image for prompt: '{prompt}'")
-    #     image_bytes = await generate_image_async(prompt)
-    #     if image_bytes:
-    #         file = discord.File(image_bytes, filename="yu_zhong_creation.png")
-    #         await message.channel.send(file=file)
-    #         logger.info(f"Sent generated image for prompt: '{prompt}'")
-    #     else:
-    #         await message.channel.send("My arcane powers faltered. The image remains unseen. (Lacks mana)", reference=message)
-    #         logger.warning(f"Failed to generate image for prompt: '{prompt}'")
-    #     return
-
     user_input = message.content.strip()
     if not user_input:
         return
 
-    # --- COMMENTED OUT: Image Description on Attachment ---
-    # if message.attachments:
-    #     for attachment in message.attachments:
-    #         if attachment.content_type and attachment.content_type.startswith("image/"):
-    #             await message.channel.send("Inspecting your offering, mortal...", reference=message)
-    #             logger.info(f"User {message.author.name} sent an image: {attachment.url}")
-    #             description = await describe_image_with_shapesinc_async(attachment.url)
-    #             if description:
-    #                 user_input = f"The mortal sent an image. It appears to be: {description}"
-    #                 logger.info(f"Image described: {description[:50]}...")
-    #             else:
-    #                 user_input = "The mortal sent an image, but even Yu Zhong's eyes cannot fully comprehend its essence. My judgment is clouded."
-    #                 logger.warning(f"Could not describe image from {message.author.name}.")
-    #             break
-    
-    # --- Bard General Response ---
     if not bard_session:
         await message.channel.send("My voice is currently silenced. Bard API failed to initialize.", reference=message)
         logger.error("Bard API session is not initialized. Cannot respond to general message.")
@@ -274,7 +236,6 @@ async def on_message(message):
     else:
         tone_desc = "Neutral tone. Respond confidently and wittily, briefly."
 
-    # Construct the prompt with the new instruction
     prompt = f"""{personality}\n\n{tone_desc}\nConversation history:\n{history}\n\n{message.author.name}: {user_input}\nYu Zhong:"""
 
     try:
