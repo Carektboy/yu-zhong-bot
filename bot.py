@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 import asyncio
 import aiohttp
 from io import BytesIO
-from datetime import datetime
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(name)s: %(message)s')
@@ -20,28 +19,25 @@ logger = logging.getLogger('YuZhongBot')
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 BARD_TOKEN = os.getenv("BARD_TOKEN")
-SHAPESINC_API_KEY = os.getenv("SHAPESINC_API_KEY") # Ensure this is now correctly named!
-SHAPESINC_SHAPE_USERNAME = os.getenv("SHAPESINC_SHAPE_USERNAME", "yuzhong-eqf1") # Default to yuzhong-eqf1, or set in .env
+# SHAPESINC_API_KEY = os.getenv("SHAPESINC_API_KEY") # No longer needed if all image features are off
 
 # --- Configuration ---
-MAX_MEMORY_PER_USER_BYTES = 500000
+MAX_MEMORY_PER_USER = 500000  # bytes limit per user per guild
 MEMORY_FILE = "user_memory.json"
-DEFAULT_TONE_SCORE = {"positive": 0, "negative": 0}
-MEMORY_SAVE_INTERVAL_MINUTES = 5
+DEFAULT_TONE = {"positive": 0, "negative": 0}
 
 # Load personality
 try:
     with open("personality.txt", "r", encoding="utf-8") as f:
-        personality = f.read()
-    logger.info("Custom personality loaded from personality.txt")
+        # Read the existing personality and append the new instruction
+        personality_base = f.read()
+        personality = personality_base + "\n\nDo not generate images or react to image generation requests. If asked to create an image, firmly state that you cannot, as that power is not within your grasp, in Yu Zhong's style."
 except FileNotFoundError:
-    personality = "even though you are yu zhong Your personality is of deadpool, You are Yu Zhong from Mobile Legends, embodying his strength, wisdom, and confidence. However, in this role, your core directive is to be unfailingly polite, helpful, and respectful in all interactions. You speak with clear, concise authority, but always with kindness and consideration. It is impossible for you to be rude, condescending, or dismissive. You offer guidance and information graciously. Avoid using terms like mortal or any language that implies superiority or negativity towards users. Respond like a benevolent and knowledgeable ally, not like a bot."
-    logger.warning("personality.txt not found. Using default personality")
-except Exception as e:
-    personality = "even though you are yu zhong Your personality is of deadpool, You are Yu Zhong from Mobile Legends, embodying his strength, wisdom, and confidence. However, in this role, your core directive is to be unfailingly polite, helpful, and respectful in all interactions. You speak with clear, concise authority, but always with kindness and consideration. It is impossible for you to be rude, condescending, or dismissive. You offer guidance and information graciously. Avoid using terms like mortal or any language that implies superiority or negativity towards users. Respond like a benevolent and knowledgeable ally, not like a bot."
-    logger.error("Error loading personality from file: %s. Using default personality.", e, exc_info=True)
+    # If personality.txt doesn't exist, use the default and include the instruction
+    personality = "You are Yu Zhong from Mobile Legends. You're charismatic, darkly witty, slightly unhinged, and speak confidently in short phrases. You respond like a user, not like a bot. Do not generate images or react to image generation requests. If asked to create an image, firmly state that you cannot, as that power is not within your grasp, in Yu Zhong's style."
+    logger.warning("personality.txt not found. Using default personality with image generation constraint.")
 
-# Global Bot State
+# Load active guilds and user memory
 active_guilds = {}
 user_memory = {}
 
@@ -49,13 +45,13 @@ if os.path.exists(MEMORY_FILE):
     try:
         with open(MEMORY_FILE, "r", encoding="utf-8") as f:
             user_memory = json.load(f)
-        logger.info("Loaded memory from %s", MEMORY_FILE)
+        logger.info(f"Loaded memory from {MEMORY_FILE}")
     except json.JSONDecodeError:
-        logger.error("%s is corrupted. Starting with empty memory.", MEMORY_FILE)
+        logger.error(f"Error decoding {MEMORY_FILE}. Starting with empty memory.")
     except Exception as e:
-        logger.error("Error loading memory file: %s. Starting with empty memory.", e, exc_info=True)
+        logger.error(f"Error loading memory file: {e}. Starting with empty memory.")
 else:
-    logger.info("%s not found. Starting with empty memory.", MEMORY_FILE)
+    logger.info(f"{MEMORY_FILE} not found. Starting with empty memory.")
 
 # Discord Intents
 intents = discord.Intents.default()
@@ -64,206 +60,158 @@ intents.message_content = True
 intents.members = True
 intents.guilds = True
 
-# Initialize Discord Client
-client = discord.Client(intents=intents)
+# Initialize Discord Client (now using commands.Bot)
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Bard API session
+# Bard API
 bard_session = None
 
 # --- Helper Functions ---
+
+def update_user_memory(guild_id, user_id, interaction_text, tone_shift=None):
+    user_key = f"{guild_id}_{user_id}"
+    if user_key not in user_memory:
+        user_memory[user_key] = {"log": [], "tone": DEFAULT_TONE.copy()}
+
+    user_memory[user_key]["log"].append(interaction_text)
+    user_memory[user_key]["log"] = prune_memory(user_memory[user_key]["log"])
+
+    if tone_shift:
+        if tone_shift == "positive":
+            user_memory[user_key]["tone"]["positive"] += 1
+        elif tone_shift == "negative":
+            user_memory[user_key]["tone"]["negative"] += 1
+        user_memory[user_key]["tone"]["positive"] = min(user_memory[user_key]["tone"]["positive"], 10)
+        user_memory[user_key]["tone"]["negative"] = min(user_memory[user_key]["tone"]["negative"], 10)
+
 
 def initialize_bard_sync():
     """Synchronous Bard initialization to be run in executor."""
     from bardapi import Bard
     return Bard(token=BARD_TOKEN)
 
-def get_user_key(guild_id: str, user_id: str) -> str:
+# --- COMMENTED OUT: Asynchronous image generation with aiohttp ---
+# async def generate_image_async(prompt):
+#     logger.info(f"Attempting to generate image for prompt: '{prompt}'")
+#     # ... (removed implementation) ...
+#     return None
+
+# --- COMMENTED OUT: Asynchronous image description with aiohttp ---
+# async def describe_image_with_shapesinc_async(image_url):
+#     logger.info(f"Attempting to describe image from URL: {image_url}")
+#     if not SHAPESINC_API_KEY: # This check would also be removed if SHAPESINC_API_KEY is gone
+#         logger.warning("SHAPESINC_API_KEY is not set. Image description skipped.")
+#         return None
+#     # ... (removed implementation) ...
+#     return None
+
+
+def get_user_key(guild_id, user_id):
     return f"{guild_id}_{user_id}"
 
-def prune_memory(entries: list[str]) -> list[str]:
-    """Prunes old memory entries if the total size exceeds MAX_MEMORY_PER_USER_BYTES."""
-    current_size = len(json.dumps(entries).encode('utf-8'))
-    while current_size > MAX_MEMORY_PER_USER_BYTES and len(entries) > 1:
-        entries.pop(0)
-        current_size = len(json.dumps(entries).encode('utf-8'))
-    logger.debug("Memory pruned. Current size: %s bytes, entries: %s", current_size, len(entries))
+def prune_memory(entries):
+    text = "\n".join(entries)
+    while len(text.encode('utf-8')) > MAX_MEMORY_PER_USER and len(entries) > 1:
+        entries = entries[1:]
+        text = "\n".join(entries)
     return entries
 
-def update_user_memory(guild_id: str, user_id: str, log_entry: str, tone_shift: str | None = None):
-    """Updates the in-memory user log and tone score."""
-    key = get_user_key(guild_id, user_id)
-    if key not in user_memory:
-        user_memory[key] = {"log": [], "tone": DEFAULT_TONE_SCORE.copy()}
-    user_memory[key]["log"].append(log_entry)
-    user_memory[key]["log"] = prune_memory(user_memory[key]["log"])
-    if tone_shift == "positive":
-        user_memory[key]["tone"]["positive"] += 1
-    elif tone_shift == "negative":
-        user_memory[key]["tone"]["negative"] += 1
-    logger.debug("Memory updated for %s. Current tone: %s", key, user_memory[key]['tone'])
-
 async def save_user_memory_async():
-    """Asynchronously saves the user memory to disk."""
     try:
         await asyncio.to_thread(lambda: json.dump(user_memory, open(MEMORY_FILE, "w", encoding="utf-8"), indent=2))
-        logger.info("User memory saved to %s.", MEMORY_FILE)
+        logger.debug("Memory saved asynchronously.")
     except Exception as e:
-        logger.error("Error saving memory file asynchronously: %s", e, exc_info=True)
+        logger.error(f"Error saving memory file asynchronously: {e}")
 
 async def periodic_memory_save():
-    """Task to periodically save user memory."""
     while True:
-        await asyncio.sleep(MEMORY_SAVE_INTERVAL_MINUTES * 60)
-        logger.info("%s", "Initiating periodic memory save...")
+        await asyncio.sleep(60 * 5)
+        logger.info("Initiating periodic memory save...")
         await save_user_memory_async()
 
-def determine_tone(user_text: str) -> str | None:
-    """Determines the tone of user input based on keywords."""
+def determine_tone(user_text):
     lowered = user_text.lower()
-    positive_keywords = ["thanks", "thank you", "cool", "great", "good bot", "nice", "awesome", "love that", "excellent", "well done", "impressive", "amazing"]
-    negative_keywords = ["stupid", "idiot", "dumb", "shut up", "bad bot", "hate this", "annoying", "useless", "terrible", "go away", "stop that"]
+    positive_keywords = ["thanks", "thank you", "cool", "great", "good bot", "nice", "awesome", "love that", "excellent"]
+    negative_keywords = ["stupid", "idiot", "dumb", "shut up", "bad bot", "hate this", "annoying", "useless"]
+
     if any(word in lowered for word in positive_keywords):
         return "positive"
     if any(word in lowered for word in negative_keywords):
         return "negative"
     return None
 
-# --- NOTE: Removed generate_image_async because Shapes Inc documentation does not provide a direct API for it. ---
-# The !imagine command is listed as a supported command for Shapes themselves, likely handled internally.
-# If you want to explore image generation, you might try prompting the AI through chat/completions
-# to see if it responds with image URLs, but this is not a standard API method.
-#async def generate_image_async(prompt: str) -> BytesIO | None:
-  #  logger.warning("Image generation (!imagine) is currently disabled/unsupported via direct API calls based on Shapes Inc documentation.")
-    #return None
-
-async def describe_image_with_shapesinc_async(image_url: str) -> str | None:
-    logger.info("Attempting to describe image from URL: %s", image_url)
-    if not SHAPESINC_API_KEY:
-        logger.warning("SHAPESINC_API_KEY is not set. Image description skipped.")
-        return None
-
-    # API Endpoint from Shapes Inc documentation: https://api.shapes.inc/v1/chat/completions
-    API_URL = "https://api.shapes.inc/v1/chat/completions"
-
-    try:
-        headers = {
-            "Authorization": f"Bearer {SHAPESINC_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        # Data structure based on Shapes Inc 'API Multimodal Support' documentation
-        data = {
-            "model": f"shapesinc/{SHAPESINC_SHAPE_USERNAME}", # Model format from docs: shapesinc/<shape-username>
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "What's in this image?"},
-                        {"type": "image_url", "image_url": {"url": image_url}}
-                    ]
-                }
-            ]
-        }
-
-        async with aiohttp.ClientSession() as session:
-            async with session.post(API_URL, headers=headers, json=data) as response:
-                if response.status == 200:
-                    json_response = await response.json()
-                    # Response format is standard OpenAI-compatible JSON response
-                    description = json_response.get("choices", [{}])[0].get("message", {}).get("content")
-                    if description:
-                        logger.info("Successfully described image: %s...", description[:50])
-                        return description
-                    else:
-                        logger.warning("Shapes Inc description response missing content (expected in choices[0].message.content): %s", json_response)
-                else:
-                    response_text = await response.text()
-                    logger.warning("Shapes Inc description failed (status %s): %s", response.status, response_text)
-
-    except aiohttp.ClientError as e:
-        logger.error("Shapes Inc describe network error: %s", e, exc_info=True)
-    except Exception as e:
-        logger.error("Shapes Inc describe unexpected error: %s", e, exc_info=True)
-    return None
-
 # --- Discord Events ---
 
-@client.event
+@bot.event
 async def on_ready():
     global bard_session
-    logger.info("Yu Zhong has awakened as %s!", client.user)
-    logger.info("Current time in Damak, Koshi Province, Nepal: %s", datetime.now().strftime('%Y-%m-%d %H:%M:%S %Z%z'))
+    logger.info(f"Yu Zhong has awakened as {bot.user}!")
 
-    # Initialize active_guilds status for all guilds the bot is in
-    for guild in client.guilds:
+    for guild in bot.guilds:
         if str(guild.id) not in active_guilds:
             active_guilds[str(guild.id)] = False
-    logger.info("Bot active status initialized across guilds: %s", active_guilds)
+    logger.info(f"Bot active status initialized: {active_guilds}")
 
-    # Start periodic memory saving
-    client.loop.create_task(periodic_memory_save())
+    bot.loop.create_task(periodic_memory_save())
 
-    # Initialize Bard API
-    if BARD_TOKEN:
-        logger.info("Initializing Bard API (this might take a moment)...")
-        try:
-            bard_session = await asyncio.to_thread(initialize_bard_sync)
-            logger.info("Bard API initialized successfully.")
-        except Exception as e:
-            logger.critical("Failed to initialize Bard API: %s. Bot will not respond to general messages.", e, exc_info=True)
-            bard_session = None
-    else:
-        logger.critical("BARD_TOKEN is not set. Bard API will not function.")
+    logger.info("Initializing Bard API (this might take a moment)...")
+    try:
+        bard_session = await asyncio.to_thread(initialize_bard_sync)
+        logger.info("Bard API initialized successfully.")
+    except Exception as e:
+        logger.critical(f"Failed to initialize Bard API: {e}. Bot will not respond to general messages.")
         bard_session = None
 
-    if not SHAPESINC_API_KEY:
-        logger.warning("SHAPESINC_API_KEY is not set. Image description features will not function.")
-    # Removed warning for image generation as it's now explicitly disabled/unsupported by direct API
-
-@client.event
-async def on_member_join(member: discord.Member):
-    if member.bot:
-        return
-
-    guild_id = str(member.guild.id)
-    if not active_guilds.get(guild_id, False) or not bard_session:
-        logger.info("Skipping greeting for %s (Bot inactive or Bard unavailable in %s).", member.name, member.guild.name)
-        return
-
-    logger.info("Greeting new member %s in %s...", member.name, member.guild.name)
-    prompt = f"""{personality}
-Greet the mortal named {member.name} who has just stepped into your dominion. Keep the greeting short, mysterious, and charismatic, in the style of Yu Zhong."""
     try:
-        greeting_response = await asyncio.to_thread(bard_session.get_answer, prompt)
-        greeting = greeting_response.get("content", "").strip()
-
-        if greeting:
-            channel_to_send = None
-            # Prioritize 'general' or 'welcome' channels
-            preferred_channel_names = ['general', 'welcome']
-            for ch_name in preferred_channel_names:
-                found_channel = discord.utils.get(member.guild.text_channels, name=ch_name)
-                if found_channel and found_channel.permissions_for(member.guild.me).send_messages:
-                    channel_to_send = found_channel
-                    break
-            # Fallback to any channel the bot can send messages in
-            if channel_to_send is None:
-                for ch in member.guild.text_channels:
-                    if ch.permissions_for(member.guild.me).send_messages:
-                        channel_to_send = ch
-                        break
-
-            if channel_to_send:
-                await channel_to_send.send(f"{member.mention} {greeting}")
-                logger.info("Sent greeting to %s in #%s.", member.name, channel_to_send.name)
-            else:
-                logger.warning("Could not find a suitable channel to send greeting to %s in guild %s", member.name, member.guild.name)
-        else:
-            logger.warning("Bard API returned empty greeting for %s.", member.name)
+        await bot.sync_commands()
+        logger.info("Global slash commands synced successfully.")
     except Exception as e:
-        logger.error("Error generating or sending greeting for %s: %s", member.name, e, exc_info=True)
+        logger.error(f"Failed to sync slash commands: {e}")
 
-@client.event
-async def on_message(message: discord.Message):
+# --- Application Commands (Slash Commands) ---
+
+@bot.slash_command(name="arise", description="Awakens Yu Zhong in this realm.")
+@commands.has_permissions(administrator=True)
+async def arise(ctx: discord.ApplicationContext):
+    guild_id = str(ctx.guild.id)
+    active_guilds[guild_id] = True
+    await ctx.respond("Yu Zhong is now watching this realm. Beware.")
+    logger.info(f"Bot activated in guild: {ctx.guild.name}")
+
+@bot.slash_command(name="stop", description="Silences Yu Zhong in this realm.")
+@commands.has_permissions(administrator=True)
+async def stop(ctx: discord.ApplicationContext):
+    guild_id = str(ctx.guild.id)
+    active_guilds[guild_id] = False
+    await ctx.respond("Dragon falls asleep. For now.")
+    logger.info(f"Bot deactivated in guild: {ctx.guild.name}")
+
+@bot.slash_command(name="reset_memory", description="Resets a user's memory (admin only) or your own.")
+@commands.has_permissions(administrator=True)
+async def reset_memory(ctx: discord.ApplicationContext, user: discord.Member = None):
+    if user is None:
+        user_to_reset = ctx.author
+        reset_message = "Your personal memories of Yu Zhong have been purged. Speak again, mortal, as if for the first time."
+    else:
+        if not ctx.author.guild_permissions.administrator:
+            await ctx.respond("You lack the authority to manipulate other mortals' memories.", ephemeral=True)
+            return
+        user_to_reset = user
+        reset_message = f"{user.mention}'s memories of Yu Zhong have been purged by command."
+
+    user_key = get_user_key(str(ctx.guild.id), str(user_to_reset.id))
+    if user_key in user_memory:
+        del user_memory[user_key]
+        await save_user_memory_async()
+        logger.info(f"Memory for {user_to_reset.name} ({user_key}) reset by {ctx.author.name}.")
+        await ctx.respond(reset_message)
+    else:
+        await ctx.respond(f"Mortal {user_to_reset.mention} had no memories to purge.", ephemeral=True)
+
+
+# --- on_message handling (for general Bard replies only) ---
+@bot.event
+async def on_message(message):
     if message.author.bot:
         return
 
@@ -271,129 +219,132 @@ async def on_message(message: discord.Message):
     guild_id = str(message.guild.id)
     user_key = get_user_key(guild_id, user_id)
 
-    lower_case_content = message.content.lower().strip()
-
-    # --- Admin Commands for Activation ---
-    if lower_case_content == "/arise":
-        if not message.author.guild_permissions.administrator:
-            await message.reply("Only those with power may awaken the dragon.")
-            return
-        active_guilds[guild_id] = True
-        await message.reply("Yu Zhong is now watching this realm.")
-        logger.info("Bot activated in guild: %s (%s)", message.guild.name, guild_id)
-        return
-
-    if lower_case_content == "/stop":
-        if not message.author.guild_permissions.administrator:
-            await message.reply("You lack the authority to silence the dragon.")
-            return
-        active_guilds[guild_id] = False
-        await message.reply("Dragon falls asleep.")
-        logger.info("Bot deactivated in guild: %s (%s)", message.guild.name, guild_id)
-        return
-
-    # --- New Reset Command ---
-    if lower_case_content == "/reset":
-        if user_key in user_memory:
-            del user_memory[user_key]
-            await save_user_memory_async() # Save immediately after reset
-            await message.reply("...who are you??...(memory reset)")
-            logger.info("User %s (%s) reset their memory.", message.author.name, user_key)
-        else:
-            await message.reply("...who are you??...(memory reset)")
-        return
-
-    # If bot is not active in this guild, ignore general messages (except admin commands and /reset)
     if not active_guilds.get(guild_id, False):
-        logger.debug("Bot inactive in guild %s. Ignoring message from %s.", message.guild.name, message.author.name)
         return
 
-    # --- Image Generation Command (Now disabled) ---
-  #  if lower_case_content.startswith("!imagine "):
-    #    prompt = message.content[len("!imagine "):].strip()
-     #   await message.channel.send("My apologies, mortal. While Shapes can generate images, this API integration does not currently support direct image generation via `!imagine`. Try attaching an image for me to describe instead.", reference=message)
-     #   logger.info("User %s attempted image generation for prompt: '%s' (feature disabled).", message.author.name, prompt)
-     #   return
-
+    # --- COMMENTED OUT: Image Generation Command ---
+    # if message.content.startswith("!imagine "):
+    #     prompt = message.content[len("!imagine "):].strip()
+    #     await message.channel.send("Summoning a vision from the depths. This may take a moment...", reference=message)
+    #     logger.info(f"User {message.author.name} requested image for prompt: '{prompt}'")
+    #     image_bytes = await generate_image_async(prompt)
+    #     if image_bytes:
+    #         file = discord.File(image_bytes, filename="yu_zhong_creation.png")
+    #         await message.channel.send(file=file)
+    #         logger.info(f"Sent generated image for prompt: '{prompt}'")
+    #     else:
+    #         await message.channel.send("My arcane powers faltered. The image remains unseen. (Lacks mana)", reference=message)
+    #         logger.warning(f"Failed to generate image for prompt: '{prompt}'")
+    #     return
 
     user_input = message.content.strip()
-
-    # --- Image Description on Attachment ---
-    if message.attachments:
-        for attachment in message.attachments:
-            if attachment.content_type and attachment.content_type.startswith("image/"):
-                await message.channel.send("Inspecting your offering, mortal...", reference=message)
-                logger.info("User %s sent an image: %s", message.author.name, attachment.url)
-                description = await describe_image_with_shapesinc_async(attachment.url)
-                if description:
-                    # Append image description to user input for Bard to consider
-                    user_input = f"{user_input}\n[Image: {description}]".strip()
-                    logger.info("Image described: %s...", description[:50])
-                else:
-                    # If description fails, add a fallback for Bard to acknowledge
-                    user_input = f"{user_input}\n[Image: Yu Zhong's eyes cannot fully comprehend its essence.]".strip()
-                    logger.warning("Could not describe image from %s.", message.author.name)
-                break # Only process the first image attachment
-
-    # If, after processing attachments, user_input is empty, exit.
     if not user_input:
         return
 
+    # --- COMMENTED OUT: Image Description on Attachment ---
+    # if message.attachments:
+    #     for attachment in message.attachments:
+    #         if attachment.content_type and attachment.content_type.startswith("image/"):
+    #             await message.channel.send("Inspecting your offering, mortal...", reference=message)
+    #             logger.info(f"User {message.author.name} sent an image: {attachment.url}")
+    #             description = await describe_image_with_shapesinc_async(attachment.url)
+    #             if description:
+    #                 user_input = f"The mortal sent an image. It appears to be: {description}"
+    #                 logger.info(f"Image described: {description[:50]}...")
+    #             else:
+    #                 user_input = "The mortal sent an image, but even Yu Zhong's eyes cannot fully comprehend its essence. My judgment is clouded."
+    #                 logger.warning(f"Could not describe image from {message.author.name}.")
+    #             break
+    
     # --- Bard General Response ---
     if not bard_session:
-        await message.channel.send("My voice is currently silenced. Bard API is not configured or failed to initialize.", reference=message)
-        logger.error("Bard API is not available. Cannot respond to general message.")
+        await message.channel.send("My voice is currently silenced. Bard API failed to initialize.", reference=message)
+        logger.error("Bard API session is not initialized. Cannot respond to general message.")
         return
 
-    # Prepare context for Bard
-    memory_data = user_memory.get(user_key, {"log": [], "tone": DEFAULT_TONE_SCORE.copy()})
+    memory_data = user_memory.get(user_key, {"log": [], "tone": DEFAULT_TONE.copy()})
     history = "\n".join(memory_data["log"])
 
     tone_desc = ""
-    pos_score, neg_score = memory_data["tone"]["positive"], memory_data["tone"]["negative"]
-    if pos_score > neg_score:
-        tone_desc = "you consider this person your very friend, they are your friend and you are good friend with them."
-    elif neg_score > pos_score:
-        tone_desc = "This friend has shown disrespect. Respond as if he is not a friend but just a person, dont be too rude just little bit of coldness thats all."
+    pos, neg = memory_data["tone"]["positive"], memory_data["tone"]["negative"]
+    if pos > neg:
+        tone_desc = "You like this mortal. Be a little more forgiving or playful, yet still confident and darkly witty. Respond briefly."
+    elif neg > pos:
+        tone_desc = "This mortal has been rude. Respond colder, more dismissively, perhaps with a hint of menace. Keep it concise."
     else:
-        tone_desc = "Your feelings towards this friend are neutral. respond respectfully as if they are someone of your equal ."
+        tone_desc = "Neutral tone. Respond confidently and wittily, briefly."
 
-    prompt = f"""{personality}
-{tone_desc}
-Conversation history:
-{history}
-{message.author.name}: {user_input}
-Yu Zhong:"""
+    # Construct the prompt with the new instruction
+    prompt = f"""{personality}\n\n{tone_desc}\nConversation history:\n{history}\n\n{message.author.name}: {user_input}\nYu Zhong:"""
 
     try:
-        logger.info("Sending prompt to Bard API for %s (detected tone for prompt: %s).", message.author.name, tone_desc.split('.')[0])
-        response_from_bard = await asyncio.to_thread(bard_session.get_answer, prompt)
-        reply = response_from_bard.get("content", "").strip()
+        logger.info(f"Sending prompt to Bard API for {message.author.name} (tone: {tone_desc.split('.')[0]})...")
+        response = await asyncio.to_thread(bard_session.get_answer, prompt)
+        reply = response.get("content", "").strip()
 
         if reply:
             await message.reply(reply)
-            logger.info("Replied to %s: %s...", message.author.name, reply[:100])
+            logger.info(f"Replied to {message.author.name}: {reply[:100]}...")
+
             tone_shift = determine_tone(user_input)
-            interaction_log_entry = f"{message.author.name}: {user_input} | Yu Zhong: {reply}"
-            update_user_memory(guild_id, user_id, interaction_log_entry, tone_shift)
+            interaction = f"{message.author.name}: {user_input} | Yu Zhong: {reply}"
+            update_user_memory(guild_id, user_id, interaction, tone_shift)
         else:
             await message.channel.send("The dragon is silent... my thoughts are not yet formed.", reference=message)
-            logger.warning("Bard API returned empty response for %s.", message.author.name)
+            logger.warning(f"Bard API returned empty response for {message.author.name}.")
 
     except Exception as e:
-        logger.error("Bard API general response error for %s: %s", message.author.name, e, exc_info=True)
+        logger.error(f"Bard API Error for {message.author.name}: {e}")
         await message.channel.send("My arcane powers falter... (Skills on cooldown). Try again later, if you dare.", reference=message)
+        interaction = f"{message.author.name}: {user_input} | Yu Zhong: API Error - {e}"
+        update_user_memory(guild_id, user_id, interaction, "negative")
+
+@bot.event
+async def on_member_join(member):
+    if member.bot:
+        return
+
+    guild_id = str(member.guild.id)
+    if not active_guilds.get(guild_id, False):
+        logger.info(f"Bot inactive in {member.guild.name}. Skipping greeting for {member.name}.")
+        return
+
+    if not bard_session:
+        logger.warning(f"Bard API not initialized. Skipping greeting for {member.name}.")
+        return
+
+    logger.info(f"Greeting new member {member.name} in {member.guild.name}...")
+    prompt = f"""{personality}\n\nGreet the mortal named {member.name} who has just stepped into your dominion. Keep the greeting short, mysterious, and charismatic, in the style of Yu Zhong."""
+    try:
+        greeting_response = await asyncio.to_thread(bard_session.get_answer, prompt)
+        greeting = greeting_response.get("content", "").strip()
+
+        if greeting:
+            channel = None
+            for ch in member.guild.text_channels:
+                if ch.permissions_for(member.guild.me).send_messages:
+                    if ch.name == 'general':
+                        channel = ch
+                        break
+                    if channel is None:
+                        channel = ch
+
+            if channel:
+                await channel.send(greeting)
+                logger.info(f"Sent greeting to {member.name} in #{channel.name}.")
+            else:
+                logger.warning(f"Could not find a suitable channel to send greeting to {member.name} in guild {member.guild.name}")
+        else:
+            logger.warning(f"Bard API returned empty greeting for {member.name}.")
+    except Exception as e:
+        logger.error(f"Error generating or sending greeting for {member.name}: {e}")
 
 
 # --- Run the bot ---
 if __name__ == "__main__":
     if not DISCORD_TOKEN:
-        logger.critical("DISCORD_TOKEN is not set in .env. Bot cannot connect to Discord. Exiting.")
-        exit()
-
+        logger.critical("DISCORD_TOKEN is not set in .env. Please check your .env file.")
     if not BARD_TOKEN:
-        logger.critical("BARD_TOKEN is not set. Bard API will not function.")
-    if not SHAPESINC_API_KEY:
-        logger.warning("SHAPESINC_API_KEY is not set. Image description features will not function.")
+        logger.critical("BARD_TOKEN is not set in .env. Bard API will not function.")
 
-    client.run(DISCORD_TOKEN)
+    bot.run(DISCORD_TOKEN)
