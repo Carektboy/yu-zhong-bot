@@ -132,9 +132,9 @@ def determine_tone(user_text: str) -> str | None:
 # The !imagine command is listed as a supported command for Shapes themselves, likely handled internally.
 # If you want to explore image generation, you might try prompting the AI through chat/completions
 # to see if it responds with image URLs, but this is not a standard API method.
-async def generate_image_async(prompt: str) -> BytesIO | None:
-    logger.warning("Image generation (!imagine) is currently disabled/unsupported via direct API calls based on Shapes Inc documentation.")
-    return None
+#async def generate_image_async(prompt: str) -> BytesIO | None:
+  #  logger.warning("Image generation (!imagine) is currently disabled/unsupported via direct API calls based on Shapes Inc documentation.")
+    #return None
 
 async def describe_image_with_shapesinc_async(image_url: str) -> str | None:
     logger.info("Attempting to describe image from URL: %s", image_url)
@@ -279,7 +279,7 @@ async def on_message(message: discord.Message):
             await message.reply("Only those with power may awaken the dragon.")
             return
         active_guilds[guild_id] = True
-        await message.reply("Yu Zhong is now watching this realm. Beware.")
+        await message.reply("Yu Zhong is now watching this realm.")
         logger.info("Bot activated in guild: %s (%s)", message.guild.name, guild_id)
         return
 
@@ -288,7 +288,7 @@ async def on_message(message: discord.Message):
             await message.reply("You lack the authority to silence the dragon.")
             return
         active_guilds[guild_id] = False
-        await message.reply("Dragon falls asleep. For now.")
+        await message.reply("Dragon falls asleep.")
         logger.info("Bot deactivated in guild: %s (%s)", message.guild.name, guild_id)
         return
 
@@ -297,10 +297,10 @@ async def on_message(message: discord.Message):
         if user_key in user_memory:
             del user_memory[user_key]
             await save_user_memory_async() # Save immediately after reset
-            await message.reply("Your memories, mortal, have been purged. A fresh slate awaits your foolishness.")
+            await message.reply("...who are you??...(memory reset)")
             logger.info("User %s (%s) reset their memory.", message.author.name, user_key)
         else:
-            await message.reply("There is no memory of your foolishness to purge, mortal.")
+            await message.reply("...who are you??...(memory reset)")
         return
 
     # If bot is not active in this guild, ignore general messages (except admin commands and /reset)
@@ -309,11 +309,11 @@ async def on_message(message: discord.Message):
         return
 
     # --- Image Generation Command (Now disabled) ---
-    if lower_case_content.startswith("!imagine "):
-        prompt = message.content[len("!imagine "):].strip()
-        await message.channel.send("My apologies, mortal. While Shapes can generate images, this API integration does not currently support direct image generation via `!imagine`. Try attaching an image for me to describe instead.", reference=message)
-        logger.info("User %s attempted image generation for prompt: '%s' (feature disabled).", message.author.name, prompt)
-        return
+  #  if lower_case_content.startswith("!imagine "):
+    #    prompt = message.content[len("!imagine "):].strip()
+     #   await message.channel.send("My apologies, mortal. While Shapes can generate images, this API integration does not currently support direct image generation via `!imagine`. Try attaching an image for me to describe instead.", reference=message)
+     #   logger.info("User %s attempted image generation for prompt: '%s' (feature disabled).", message.author.name, prompt)
+     #   return
 
 
     user_input = message.content.strip()
@@ -352,7 +352,7 @@ async def on_message(message: discord.Message):
     tone_desc = ""
     pos_score, neg_score = memory_data["tone"]["positive"], memory_data["tone"]["negative"]
     if pos_score > neg_score:
-        tone_desc = "you consider this person your very friend, they are you best buddy and you are good friend with them."
+        tone_desc = "you consider this person your very friend, they are your friend and you are good friend with them."
     elif neg_score > pos_score:
         tone_desc = "This friend has shown disrespect. Respond as if he is not a friend but just a person, dont be too rude just little bit of coldness thats all."
     else:
