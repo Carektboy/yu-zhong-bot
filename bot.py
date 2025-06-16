@@ -6,11 +6,14 @@ import os
 import json
 import discord
 from discord.ext import commands
-from discord import app_commands # NEW: Import app_commands
+from discord import app_commands
 from dotenv import load_dotenv
 import asyncio
-import aiohttp
-from io import BytesIO
+# import aiohttp # Not needed for Shapes.inc API call
+# from io import BytesIO # Not needed for Shapes.inc API call
+
+# NEW: Import OpenAI client
+from openai import OpenAI
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(name)s: %(message)s')
@@ -19,7 +22,10 @@ logger = logging.getLogger('YuZhongBot')
 # Load environment variables
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-BARD_TOKEN = os.getenv("BARD_TOKEN")
+# CHANGED: Replaced BARD_TOKEN with SHAPESINC_API_KEY
+SHAPESINC_API_KEY = os.getenv("SHAPESINC_API_KEY")
+# NEW: Environment variable for the specific Shapes.inc model (e.g., shapesinc/YOUR_SHAPE_USERNAME)
+SHAPESINC_SHAPE_MODEL = os.getenv("SHAPESINC_SHAPE_MODEL")
 
 # --- Configuration ---
 MAX_MEMORY_PER_USER = 500000  # bytes limit per user per guild
@@ -61,17 +67,26 @@ intents.guilds = True
 # Initialize Discord Client (now using commands.Bot)
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Bard API
-bard_session = None
+# Shapes.inc API Client (CHANGED from bard_session)
+shapes_client = None
 
 # --- Helper Functions ---
 
-def update_user_memory(guild_id, user_id, interaction_text, tone_shift=None):
+# CHANGED: The update_user_memory function now expects a more structured interaction to save
+# to memory, specifically for the OpenAI-compatible API roles.
+# It will save the user's input and the bot's reply separately for better context re-creation.
+def update_user_memory(guild_id, user_id, user_message, bot_reply, tone_shift=None):
     user_key = f"{guild_id}_{user_id}"
     if user_key not in user_memory:
+        # Memory log will now store pairs for user and assistant
         user_memory[user_key] = {"log": [], "tone": DEFAULT_TONE.copy()}
 
-    user_memory[user_key]["log"].append(interaction_text)
+    # Store user and bot messages as separate entries or as a tuple/dict if more complex memory needed
+    # For simplicity here, we'll store them as separate items in the log list
+    # The parsing logic in on_message will then reconstruct the roles
+    user_memory[user_key]["log"].append({"role": "user", "content": user_message})
+    user_memory[user_key]["log"].append({"role": "assistant", "content": bot_reply})
+    
     user_memory[user_key]["log"] = prune_memory(user_memory[user_key]["log"])
 
     if tone_shift:
@@ -82,21 +97,28 @@ def update_user_memory(guild_id, user_id, interaction_text, tone_shift=None):
         user_memory[user_key]["tone"]["positive"] = min(user_memory[user_key]["tone"]["positive"], 10)
         user_memory[user_key]["tone"]["negative"] = min(user_memory[user_key]["tone"]["negative"], 10)
 
-
-def initialize_bard_sync():
-    """Synchronous Bard initialization to be run in executor."""
-    from bardapi import Bard
-    return Bard(token=BARD_TOKEN)
-
-
 def get_user_key(guild_id, user_id):
     return f"{guild_id}_{user_id}"
 
+# CHANGED: Prune memory function needs to understand the new log structure (list of dicts)
 def prune_memory(entries):
-    text = "\n".join(entries)
-    while len(text.encode('utf-8')) > MAX_MEMORY_PER_USER and len(entries) > 1:
-        entries = entries[1:]
-        text = "\n".join(entries)
+    # Calculate approximate size of messages list
+    # Sum of length of 'content' strings for a rough estimate
+    current_size = sum(len(entry.get("content", "").encode('utf-8')) for entry in entries)
+    
+    # Keep removing oldest messages (pairs of user/assistant) until under limit
+    while current_size > MAX_MEMORY_PER_USER and len(entries) > 2: # Keep at least system + 1 turn
+        # Remove the oldest user and assistant message pair
+        if entries[0].get("role") == "user" and entries[1].get("role") == "assistant":
+            removed_user_msg = entries.pop(0)
+            removed_assistant_msg = entries.pop(0)
+            current_size -= (len(removed_user_msg.get("content", "").encode('utf-8')) + 
+                             len(removed_assistant_msg.get("content", "").encode('utf-8')))
+        else:
+            # If history is malformed, just remove the oldest entry
+            removed_entry = entries.pop(0)
+            current_size -= len(removed_entry.get("content", "").encode('utf-8'))
+        
     return entries
 
 async def save_user_memory_async():
@@ -127,7 +149,7 @@ def determine_tone(user_text):
 
 @bot.event
 async def on_ready():
-    global bard_session
+    global shapes_client # CHANGED from bard_session
     logger.info(f"Yu Zhong has awakened as {bot.user}!")
 
     for guild in bot.guilds:
@@ -137,72 +159,73 @@ async def on_ready():
 
     bot.loop.create_task(periodic_memory_save())
 
-    logger.info("Initializing Bard API (this might take a moment)...")
-    try:
-        bard_session = await asyncio.to_thread(initialize_bard_sync)
-        logger.info("Bard API initialized successfully.")
-    except Exception as e:
-        logger.critical(f"Failed to initialize Bard API: {e}. Bot will not respond to general messages.")
-        bard_session = None
+    logger.info("Initializing Shapes.inc API...")
+    if SHAPESINC_API_KEY and SHAPESINC_SHAPE_MODEL: # NEW: Check for model too
+        try:
+            # NEW: Initialize OpenAI client pointing to Shapes.inc API
+            shapes_client = OpenAI(
+                api_key=SHAPESINC_API_KEY,
+                base_url="https://api.shapes.inc/v1/"
+            )
+            logger.info("Shapes.inc API initialized successfully.")
+        except Exception as e:
+            logger.critical(f"Failed to initialize Shapes.inc API: {e}. Bot will not respond to general messages.")
+            shapes_client = None
+    else:
+        logger.critical("SHAPESINC_API_KEY or SHAPESINC_SHAPE_MODEL is not set. Shapes.inc API will not function.")
+        shapes_client = None
 
-    # Sync slash commands - IMPORTANT!
+    # Sync slash commands
     try:
-        # Use bot.tree.sync() for app_commands
         await bot.tree.sync() # Sync global commands
         logger.info("Global slash commands synced successfully via bot.tree.sync().")
-        # For faster testing on a specific server (replace YOUR_TEST_GUILD_ID)
-        # guild_id_for_testing = 123456789012345678 # Replace with your actual test guild ID
-        # guild_obj = discord.Object(id=guild_id_for_testing)
-        # bot.tree.copy_global_to_guild(guild=guild_obj) # Copy global commands to this guild
-        # await bot.tree.sync(guild=guild_obj) # Sync this specific guild
-        # logger.info(f"Slash commands synced to test guild {guild_id_for_testing}.")
     except Exception as e:
         logger.error(f"Failed to sync slash commands: {e}")
 
 # --- Application Commands (Slash Commands) ---
+# (These remain largely unchanged as they don't interact with Bard/Shapes.inc API directly)
 
-@bot.tree.command(name="arise", description="Awakens Yu Zhong in this realm.") # CHANGED: from bot.slash_command
-@app_commands.checks.has_permissions(administrator=True) # CHANGED: decorator for app_commands
-async def arise(interaction: discord.Interaction): # CHANGED: ctx to interaction
-    guild_id = str(interaction.guild.id) # CHANGED: ctx.guild.id to interaction.guild.id
+@bot.tree.command(name="arise", description="Awakens Yu Zhong in this realm.")
+@app_commands.checks.has_permissions(administrator=True)
+async def arise(interaction: discord.Interaction):
+    guild_id = str(interaction.guild.id)
     active_guilds[guild_id] = True
-    await interaction.response.send_message("Yu Zhong is now watching this realm. Beware.") # CHANGED: ctx.respond to interaction.response.send_message
-    logger.info(f"Bot activated in guild: {interaction.guild.name}") # CHANGED: ctx.guild.name
+    await interaction.response.send_message("Yu Zhong is now watching this realm. Beware.")
+    logger.info(f"Bot activated in guild: {interaction.guild.name}")
 
-@bot.tree.command(name="stop", description="Silences Yu Zhong in this realm.") # CHANGED
-@app_commands.checks.has_permissions(administrator=True) # CHANGED
-async def stop(interaction: discord.Interaction): # CHANGED
-    guild_id = str(interaction.guild.id) # CHANGED
+@bot.tree.command(name="stop", description="Silences Yu Zhong in this realm.")
+@app_commands.checks.has_permissions(administrator=True)
+async def stop(interaction: discord.Interaction):
+    guild_id = str(interaction.guild.id)
     active_guilds[guild_id] = False
-    await interaction.response.send_message("Dragon falls asleep. For now.") # CHANGED
-    logger.info(f"Bot deactivated in guild: {interaction.guild.name}") # CHANGED
+    await interaction.response.send_message("Dragon falls asleep. For now.")
+    logger.info(f"Bot deactivated in guild: {interaction.guild.name}")
 
-@bot.tree.command(name="reset_memory", description="Resets a user's memory (admin only) or your own.") # CHANGED
-@app_commands.checks.has_permissions(administrator=True) # CHANGED
-@app_commands.describe(user="The user whose memory to reset (defaults to yourself).") # NEW: for slash command argument description
-async def reset_memory(interaction: discord.Interaction, user: discord.Member = None): # CHANGED
+@bot.tree.command(name="reset_memory", description="Resets a user's memory (admin only) or your own.")
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(user="The user whose memory to reset (defaults to yourself).")
+async def reset_memory(interaction: discord.Interaction, user: discord.Member = None):
     if user is None:
-        user_to_reset = interaction.user # CHANGED: ctx.author to interaction.user
+        user_to_reset = interaction.user
         reset_message = "Your personal memories of Yu Zhong have been purged. Speak again, mortal, as if for the first time."
     else:
-        # Check permissions *again* if a specific user is targeted, for clarity/redundancy
-        if not interaction.user.guild_permissions.administrator: # CHANGED: ctx.author to interaction.user
-            await interaction.response.send_message("You lack the authority to manipulate other mortals' memories.", ephemeral=True) # CHANGED
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("You lack the authority to manipulate other mortals' memories.", ephemeral=True)
             return
         user_to_reset = user
         reset_message = f"{user.mention}'s memories of Yu Zhong have been purged by command."
 
-    user_key = get_user_key(str(interaction.guild.id), str(user_to_reset.id)) # CHANGED
+    user_key = get_user_key(str(interaction.guild.id), str(user_to_reset.id))
     if user_key in user_memory:
         del user_memory[user_key]
         await save_user_memory_async()
-        logger.info(f"Memory for {user_to_reset.name} ({user_key}) reset by {interaction.user.name}.") # CHANGED
-        await interaction.response.send_message(reset_message) # CHANGED
+        logger.info(f"Memory for {user_to_reset.name} ({user_key}) reset by {interaction.user.name}.")
+        await interaction.response.send_message(reset_message)
     else:
-        await interaction.response.send_message(f"Mortal {user_to_reset.mention} had no memories to purge.", ephemeral=True) # CHANGED
+        await interaction.response.send_message(f"Mortal {user_to_reset.mention} had no memories to purge.", ephemeral=True)
 
 
-# --- on_message handling (for general Bard replies only) ---
+# --- on_message handling (for general AI replies) ---
 @bot.event
 async def on_message(message):
     if message.author.bot:
@@ -219,13 +242,18 @@ async def on_message(message):
     if not user_input:
         return
 
-    if not bard_session:
-        await message.channel.send("My voice is currently silenced. Bard API failed to initialize.", reference=message)
-        logger.error("Bard API session is not initialized. Cannot respond to general message.")
+    # CHANGED: Check if Shapes.inc client is initialized
+    if not shapes_client:
+        await message.channel.send("My voice is currently silenced. Shapes.inc API failed to initialize.", reference=message)
+        logger.error("Shapes.inc API client is not initialized. Cannot respond to general message.")
         return
 
     memory_data = user_memory.get(user_key, {"log": [], "tone": DEFAULT_TONE.copy()})
-    history = "\n".join(memory_data["log"])
+    
+    # NEW: Construct messages array for OpenAI-compatible API
+    messages = [
+        {"role": "system", "content": personality} # System message for personality
+    ]
 
     tone_desc = ""
     pos, neg = memory_data["tone"]["positive"], memory_data["tone"]["negative"]
@@ -235,30 +263,48 @@ async def on_message(message):
         tone_desc = "This mortal has been rude. Respond colder, more dismissively, perhaps with a hint of menace. Keep it concise."
     else:
         tone_desc = "Neutral tone. Respond confidently and wittily, briefly."
+    
+    # Add tone description to system message
+    messages[0]["content"] += f"\n{tone_desc}"
 
-    prompt = f"""{personality}\n\n{tone_desc}\nConversation history:\n{history}\n\n{message.author.name}: {user_input}\nYu Zhong:"""
+    # NEW: Add historical messages from memory to the messages list
+    # The 'log' now directly stores [{"role": "user", "content": "..."}] and [{"role": "assistant", "content": "..."}]
+    messages.extend(memory_data["log"])
+
+    # Add the current user input
+    messages.append({"role": "user", "content": user_input})
 
     try:
-        logger.info(f"Sending prompt to Bard API for {message.author.name} (tone: {tone_desc.split('.')[0]})...")
-        response = await asyncio.to_thread(bard_session.get_answer, prompt)
-        reply = response.get("content", "").strip()
+        logger.info(f"Sending prompt to Shapes.inc API for {message.author.name} (tone: {tone_desc.split('.')[0]})...")
+        
+        # NEW: Call Shapes.inc API using the OpenAI client
+        response_completion = await asyncio.to_thread(
+            shapes_client.chat.completions.create,
+            model=SHAPESINC_SHAPE_MODEL, # Use the model/shape you configured
+            messages=messages,
+            max_tokens=250, # Adjust as needed
+            temperature=0.7 # Adjust as needed for creativity
+        )
+
+        # Access the content from the response
+        reply = response_completion.choices[0].message.content.strip()
 
         if reply:
             await message.reply(reply)
             logger.info(f"Replied to {message.author.name}: {reply[:100]}...")
 
             tone_shift = determine_tone(user_input)
-            interaction = f"{message.author.name}: {user_input} | Yu Zhong: {reply}"
-            update_user_memory(guild_id, user_id, interaction, tone_shift)
+            # CHANGED: update_user_memory now takes user_message and bot_reply separately
+            update_user_memory(guild_id, user_id, user_input, reply, tone_shift)
         else:
-            await message.channel.send("The dragon is silent... my thoughts are not yet formed.", reference=message)
-            logger.warning(f"Bard API returned empty response for {message.author.name}.")
+            await message.channel.send("The dragon is silent... my thoughts are not yet formed by Shapes.inc.", reference=message)
+            logger.warning(f"Shapes.inc API returned empty response for {message.author.name}.")
 
     except Exception as e:
-        logger.error(f"Bard API Error for {message.author.name}: {e}")
+        logger.error(f"Shapes.inc API Error for {message.author.name}: {e}")
         await message.channel.send("My arcane powers falter... (Skills on cooldown). Try again later, if you dare.", reference=message)
-        interaction = f"{message.author.name}: {user_input} | Yu Zhong: API Error - {e}"
-        update_user_memory(guild_id, user_id, interaction, "negative")
+        # CHANGED: update_user_memory now takes user_message and bot_reply (empty string for error) separately
+        update_user_memory(guild_id, user_id, user_input, f"API Error - {e}", "negative") # Store error in memory for debugging
 
 @bot.event
 async def on_member_join(member):
@@ -270,15 +316,28 @@ async def on_member_join(member):
         logger.info(f"Bot inactive in {member.guild.name}. Skipping greeting for {member.name}.")
         return
 
-    if not bard_session:
-        logger.warning(f"Bard API not initialized. Skipping greeting for {member.name}.")
+    # CHANGED: Check shapes_client
+    if not shapes_client:
+        logger.warning(f"Shapes.inc API not initialized. Skipping greeting for {member.name}.")
         return
 
     logger.info(f"Greeting new member {member.name} in {member.guild.name}...")
-    prompt = f"""{personality}\n\nGreet the mortal named {member.name} who has just stepped into your dominion. Keep the greeting short, mysterious, and charismatic, in the style of Yu Zhong."""
+    # NEW: Construct messages for greeting
+    greeting_messages = [
+        {"role": "system", "content": personality},
+        {"role": "user", "content": f"Greet the mortal named {member.name} who has just stepped into your dominion. Keep the greeting short, mysterious, and charismatic, in the style of Yu Zhong."}
+    ]
+    
     try:
-        greeting_response = await asyncio.to_thread(bard_session.get_answer, prompt)
-        greeting = greeting_response.get("content", "").strip()
+        # NEW: Call Shapes.inc API for greeting
+        greeting_response_completion = await asyncio.to_thread(
+            shapes_client.chat.completions.create,
+            model=SHAPESINC_SHAPE_MODEL,
+            messages=greeting_messages,
+            max_tokens=100, # Shorter max_tokens for greetings
+            temperature=0.8 # Slightly more creative for greetings
+        )
+        greeting = greeting_response_completion.choices[0].message.content.strip()
 
         if greeting:
             channel = None
@@ -296,7 +355,7 @@ async def on_member_join(member):
             else:
                 logger.warning(f"Could not find a suitable channel to send greeting to {member.name} in guild {member.guild.name}")
         else:
-            logger.warning(f"Bard API returned empty greeting for {member.name}.")
+            logger.warning(f"Shapes.inc API returned empty greeting for {member.name}.")
     except Exception as e:
         logger.error(f"Error generating or sending greeting for {member.name}: {e}")
 
@@ -305,7 +364,10 @@ async def on_member_join(member):
 if __name__ == "__main__":
     if not DISCORD_TOKEN:
         logger.critical("DISCORD_TOKEN is not set in .env. Please check your .env file.")
-    if not BARD_TOKEN:
-        logger.critical("BARD_TOKEN is not set in .env. Bard API will not function.")
+    # CHANGED: Check for Shapes.inc API key and model
+    if not SHAPESINC_API_KEY:
+        logger.critical("SHAPESINC_API_KEY is not set in .env. Shapes.inc API will not function.")
+    if not SHAPESINC_SHAPE_MODEL:
+        logger.critical("SHAPESINC_SHAPE_MODEL is not set in .env. Shapes.inc API will not function.")
 
     bot.run(DISCORD_TOKEN)
