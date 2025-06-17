@@ -4,3 +4,4 @@ python-dotenv
 requests
 flask
 aiohttp
+beautifulsoup4
