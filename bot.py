@@ -389,11 +389,14 @@ async def on_message(message):
 
     # Check if the bot is active in this guild OR if the bot is mentioned
     if not active_guilds.get(guild_id, False) and not bot_mentioned:
+        # Still process commands even if bot is not active
+        await bot.process_commands(message)
         return
 
     user_input = message.content.strip()
     # Ignore empty messages
     if not user_input:
+        await bot.process_commands(message)
         return
 
     # Check if Shapes.inc client is initialized
