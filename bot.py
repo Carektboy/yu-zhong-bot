@@ -384,8 +384,11 @@ async def on_message(message):
     user_id = str(message.author.id)
     guild_id = str(message.guild.id)
 
-    # Check if the bot is active in this guild
-    if not active_guilds.get(guild_id, False):
+    # Check if bot is mentioned
+    bot_mentioned = bot.user in message.mentions
+
+    # Check if the bot is active in this guild OR if the bot is mentioned
+    if not active_guilds.get(guild_id, False) and not bot_mentioned:
         return
 
     user_input = message.content.strip()
