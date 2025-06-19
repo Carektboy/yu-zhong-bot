@@ -8,7 +8,8 @@ try:
 except ImportError:
     update_patch_notes_main = None  # Safe fallback if file is missing
 
-app = Flask('')
+app = Flask(__name__)
+app.config['THREADED'] = True
 
 @app.route('/')
 def home():
@@ -25,7 +26,7 @@ def update_patch():
         return f"❌ Error: {str(e)}", 500
 
 def run():
-    app.run(host='0.0.0.0', port=8080)
+    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
 
 def keep_alive():
     t = Thread(target=run)
