@@ -10,6 +10,7 @@ import os
 import json
 import discord
 from keep_alive import keep_alive
+import random
 
 from openai import OpenAI  # already imported here, no need to re-import inside block
 
@@ -30,10 +31,8 @@ logger = logging.getLogger('YuZhongBot')
 if SHAPESINC_API_KEY and SHAPESINC_MODEL_USERNAME:
     try:
         # Try to get the list of available models to find the correct model ID
-        temp_client = OpenAI(
-            api_key=SHAPESINC_API_KEY,
-            base_url="https://api.shapes.inc/v1/"
-        )
+        temp_client = OpenAI(api_key=SHAPESINC_API_KEY,
+                             base_url="https://api.shapes.inc/v1/")
 
         # Get available models
         models_response = temp_client.models.list()
@@ -48,14 +47,19 @@ if SHAPESINC_API_KEY and SHAPESINC_MODEL_USERNAME:
 
         if SHAPESINC_SHAPE_MODEL:
             shapes_client = temp_client
-            logger.info(f"Shapes.inc API client initialized with model: {SHAPESINC_SHAPE_MODEL}")
+            logger.info(
+                f"Shapes.inc API client initialized with model: {SHAPESINC_SHAPE_MODEL}"
+            )
             logger.info(f"Available models: {available_models}")
         else:
-            logger.critical(f"Model '{SHAPESINC_MODEL_USERNAME}' not found. Available models: {available_models}")
+            logger.critical(
+                f"Model '{SHAPESINC_MODEL_USERNAME}' not found. Available models: {available_models}"
+            )
             shapes_client = None
 
     except Exception as e:
-        logger.critical(f"Failed to initialize Shapes.inc client or list models: {e}")
+        logger.critical(
+            f"Failed to initialize Shapes.inc client or list models: {e}")
         shapes_client = None
 else:
     logger.critical(
@@ -85,21 +89,28 @@ def get_latest_patch_notes():
         urls_to_try = [
             "https://m.mobilelegends.com/news/articleldetail?newsid=3062931",  # Specific article
             "https://www.mobilelegends.com/en/news",
-            "https://mobile-legends.fandom.com/wiki/Patch_Notes", 
+            "https://mobile-legends.fandom.com/wiki/Patch_Notes",
             "https://m.mobilelegends.com/en/news"
         ]
 
         for url in urls_to_try:
             try:
-                response = requests.get(url, timeout=10, headers={
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-                })
+                response = requests.get(
+                    url,
+                    timeout=10,
+                    headers={
+                        'User-Agent':
+                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                    })
                 response.raise_for_status()
                 soup = BeautifulSoup(response.text, "html.parser")
 
                 # Strategy 1: Look for any text containing patch/update keywords
                 all_text = soup.get_text()
-                patch_keywords = ["patch", "update", "balance", "hero", "nerf", "buff", "adjustment"]
+                patch_keywords = [
+                    "patch", "update", "balance", "hero", "nerf", "buff",
+                    "adjustment"
+                ]
 
                 # Find sentences containing patch keywords
                 sentences = all_text.split('.')
@@ -107,13 +118,16 @@ def get_latest_patch_notes():
 
                 for sentence in sentences:
                     sentence = sentence.strip()
-                    if any(keyword in sentence.lower() for keyword in patch_keywords) and len(sentence) > 20:
+                    if any(keyword in sentence.lower() for keyword in
+                           patch_keywords) and len(sentence) > 20:
                         relevant_sentences.append(sentence[:200])
-                        if len(relevant_sentences) >= 5:  # Limit to 5 relevant sentences
+                        if len(relevant_sentences
+                               ) >= 5:  # Limit to 5 relevant sentences
                             break
 
                 if relevant_sentences:
-                    summary = "Recent patch information:\n" + "\n• ".join(relevant_sentences)
+                    summary = "Recent patch information:\n" + "\n• ".join(
+                        relevant_sentences)
                     patch_cache["data"] = summary
                     patch_cache["timestamp"] = now
                     return summary
@@ -131,13 +145,16 @@ def get_latest_patch_notes():
                         texts = []
                         for elem in elements[:10]:  # Check first 10 elements
                             text = elem.get_text(strip=True)
-                            if text and len(text) > 10 and any(keyword in text.lower() for keyword in patch_keywords):
+                            if text and len(text) > 10 and any(
+                                    keyword in text.lower()
+                                    for keyword in patch_keywords):
                                 texts.append(text[:150])
                                 if len(texts) >= 3:
                                     break
 
                         if texts:
-                            summary = f"Latest from {url}:\n" + "\n• ".join(texts)
+                            summary = f"Latest from {url}:\n" + "\n• ".join(
+                                texts)
                             patch_cache["data"] = summary
                             patch_cache["timestamp"] = now
                             return summary
@@ -147,7 +164,8 @@ def get_latest_patch_notes():
                 continue
 
         # If all URLs fail, return a generic message
-        patch_cache["data"] = "Unable to fetch current patch notes. The Land of Dawn's secrets remain hidden for now."
+        patch_cache[
+            "data"] = "Unable to fetch current patch notes. The Land of Dawn's secrets remain hidden for now."
         patch_cache["timestamp"] = now
         return patch_cache["data"]
     except requests.exceptions.RequestException as e:
@@ -277,6 +295,27 @@ async def on_ready():
         logger.error(f"Failed to sync slash commands: {e}")
 
 
+async def safe_followup_send(interaction,
+                             message,
+                             ephemeral=False,
+                             max_retries=3):
+    """Safely send a followup message with retry logic"""
+    for attempt in range(max_retries):
+        try:
+            await interaction.followup.send(message, ephemeral=ephemeral)
+            return
+        except discord.HTTPException as e:
+            if e.status == 429:  # Rate limited
+                wait_time = 2**attempt + random.uniform(0, 1)
+                logger.warning(
+                    f"Rate limited, waiting {wait_time:.2f}s before retry {attempt + 1}"
+                )
+                await asyncio.sleep(wait_time)
+            else:
+                raise e
+    logger.error(f"Failed to send message after {max_retries} attempts")
+
+
 @bot.tree.command(name="arise",
                   description="Activate Yu Zhong in this server.")
 @app_commands.checks.has_permissions(administrator=True)
@@ -286,14 +325,16 @@ async def arise(interaction: discord.Interaction):
 
     guild_id_str = str(interaction.guild_id)
     if guild_id_str is None:
-        await interaction.followup.send(
-            "This command can only be used in a server.", ephemeral=True)
+        await safe_followup_send(interaction,
+                                 "This command can only be used in a server.",
+                                 ephemeral=True)
         return
 
     active_guilds[guild_id_str] = True
     save_enabled_guilds()
-    await interaction.followup.send("Yu Zhong has risen from the abyss...",
-                                    ephemeral=True)
+    await safe_followup_send(interaction,
+                             "Yu Zhong has risen from the abyss...",
+                             ephemeral=True)
 
 
 @bot.tree.command(name="stop", description="Put Yu Zhong back to rest.")
@@ -304,18 +345,21 @@ async def stop(interaction: discord.Interaction):
 
     guild_id_str = str(interaction.guild_id)
     if guild_id_str is None:
-        await interaction.followup.send(
-            "This command can only be used in a server.", ephemeral=True)
+        await safe_followup_send(interaction,
+                                 "This command can only be used in a server.",
+                                 ephemeral=True)
         return
 
     active_guilds[guild_id_str] = False
     save_enabled_guilds()
-    await interaction.followup.send("Yu Zhong has returned to the abyss.",
-                                    ephemeral=True)
+    await safe_followup_send(interaction,
+                             "Yu Zhong has returned to the abyss.",
+                             ephemeral=True)
 
 
 # Define the memory directory
 MEMORY_DIR = "user_memories"
+
 
 @bot.tree.command(name="reset",
                   description="Reset Yu Zhong's memory for this server.")
@@ -337,12 +381,14 @@ async def reset(interaction: discord.Interaction):
         os.makedirs(MEMORY_DIR)
     if os.path.exists(MEMORY_DIR):
         for filename in os.listdir(MEMORY_DIR):
-            if filename.startswith(f"user_{guild_id}_") and filename.endswith(".json"):
+            if filename.startswith(f"user_{guild_id}_") and filename.endswith(
+                    ".json"):
                 try:
                     os.remove(os.path.join(MEMORY_DIR, filename))
                     removed = True
                 except OSError as e:
-                    logger.error(f"Failed to remove memory file {filename}: {e}")
+                    logger.error(
+                        f"Failed to remove memory file {filename}: {e}")
 
     # Also clear from memory cache
     for key in list(user_memory.keys()):
@@ -351,12 +397,14 @@ async def reset(interaction: discord.Interaction):
             removed = True
 
     if removed:
-        await interaction.followup.send(
+        await safe_followup_send(
+            interaction,
             "Yu Zhong's memory has been purged for this server.",
             ephemeral=True)
     else:
-        await interaction.followup.send(
-            "No memory found to reset for this server.", ephemeral=True)
+        await safe_followup_send(interaction,
+                                 "No memory found to reset for this server.",
+                                 ephemeral=True)
 
 
 @bot.tree.command(name="patch",
@@ -371,12 +419,14 @@ async def patch(interaction: discord.Interaction):
     if len(summary) > 1900:  # Leave some room for the prefix
         summary = summary[:1897] + "..."
 
-    await interaction.followup.send(
+    await safe_followup_send(
+        interaction,
         f"\U0001F4DC **Latest Patch Notes Summary:**\n```{summary}```")
 
 
-@bot.tree.command(name="search",
-                  description="Search for information with Yu Zhong's knowledge.")
+@bot.tree.command(
+    name="search",
+    description="Search for information with Yu Zhong's knowledge.")
 async def search(interaction: discord.Interaction, query: str):
     # Defer the interaction because AI processing can take time
     await interaction.response.defer()
@@ -391,14 +441,19 @@ async def search(interaction: discord.Interaction, query: str):
         # Get patch notes for context
         patch_notes = get_latest_patch_notes()
         user_display_name = interaction.user.display_name
-        
+
         # Create search-specific system message
         search_personality = f"{personality}\n\nYou are being asked to search for information about: '{query}'. Provide helpful, accurate information while maintaining your Yu Zhong personality. Be informative but keep your characteristic wit and confidence."
-        
-        messages = [
-            {"role": "system", "content": search_personality},
-            {"role": "user", "content": f"Search for information about: {query}\n\n[Context: Latest MLBB Patch Notes]\n{patch_notes}\n\n[User Info: Address the user as '{user_display_name}' in your response, not by any model or API names]"}
-        ]
+
+        messages = [{
+            "role": "system",
+            "content": search_personality
+        }, {
+            "role":
+            "user",
+            "content":
+            f"Search for information about: {query}\n\n[Context: Latest MLBB Patch Notes]\n{patch_notes}\n\n[User Info: Address the user as '{user_display_name}' in your response, not by any model or API names]"
+        }]
 
         # Use asyncio.to_thread for blocking API calls
         response_completion = await asyncio.to_thread(
@@ -406,26 +461,33 @@ async def search(interaction: discord.Interaction, query: str):
             model=SHAPESINC_SHAPE_MODEL,
             messages=messages,
             max_tokens=400,  # Slightly more tokens for search results
-            temperature=0.7
-        )
+            temperature=0.7)
 
         reply = ""
-        if response_completion and response_completion.choices and response_completion.choices[0].message:
+        if response_completion and response_completion.choices and response_completion.choices[
+                0].message:
             reply = response_completion.choices[0].message.content.strip()
 
         if reply:
             # Discord message limit handling
             if len(reply) > 1900:
                 reply = reply[:1897] + "..."
-            await interaction.followup.send(f"🔍 **Search Results for '{query}':**\n\n{reply}")
+            await safe_followup_send(
+                interaction, f"🔍 **Search Results for '{query}':**\n\n{reply}")
         else:
-            await interaction.followup.send(
-                "My search through the arcane knowledge yields nothing... (No response generated.)")
+            await safe_followup_send(
+                interaction,
+                "My search through the arcane knowledge yields nothing... (No response generated.)"
+            )
 
     except Exception as e:
-        logger.error(f"Search command error for query '{query}' by {interaction.user.display_name}: {e}")
-        await interaction.followup.send(
-            "The search spell backfired... (An error occurred while processing your search.)")
+        logger.error(
+            f"Search command error for query '{query}' by {interaction.user.display_name}: {e}"
+        )
+        await safe_followup_send(
+            interaction,
+            "The search spell backfired... (An error occurred while processing your search.)"
+        )
 
 
 @bot.event
@@ -447,13 +509,13 @@ async def on_message(message):
         return
 
     user_input = message.content.strip()
-    
+
     # Check for images in the message
     has_images = len(message.attachments) > 0 and any(
-        attachment.content_type and attachment.content_type.startswith('image/')
-        for attachment in message.attachments
-    )
-    
+        attachment.content_type
+        and attachment.content_type.startswith('image/')
+        for attachment in message.attachments)
+
     # Ignore empty messages unless there are images
     if not user_input and not has_images:
         await bot.process_commands(message)
@@ -491,16 +553,19 @@ async def on_message(message):
     # Enhance input with latest patch notes and user context
     patch_notes = get_latest_patch_notes()
     user_display_name = message.author.display_name
-    
+
     # Prepare the user message content
     if has_images:
         # For images, create a message with both text and image content
-        image_urls = [attachment.url for attachment in message.attachments 
-                     if attachment.content_type and attachment.content_type.startswith('image/')]
-        
+        image_urls = [
+            attachment.url for attachment in message.attachments
+            if attachment.content_type
+            and attachment.content_type.startswith('image/')
+        ]
+
         # Create content array for vision model
         content = []
-        
+
         # Add text if present
         if user_input:
             enhanced_input = f"{user_input}\n\n[Context: Latest MLBB Patch Notes]\n{patch_notes}\n\n[User Info: Address the user as '{user_display_name}' in your response, not by any model or API names]"
@@ -509,14 +574,16 @@ async def on_message(message):
             # Default text for image-only messages
             enhanced_input = f"Describe what you see in this image with your characteristic Yu Zhong personality.\n\n[Context: Latest MLBB Patch Notes]\n{patch_notes}\n\n[User Info: Address the user as '{user_display_name}' in your response, not by any model or API names]"
             content.append({"type": "text", "text": enhanced_input})
-        
+
         # Add images
         for image_url in image_urls:
             content.append({
                 "type": "image_url",
-                "image_url": {"url": image_url}
+                "image_url": {
+                    "url": image_url
+                }
             })
-        
+
         messages.append({"role": "user", "content": content})
     else:
         # Text-only message (original behavior)
@@ -543,7 +610,8 @@ async def on_message(message):
             tone_change = determine_tone(user_input)
             if tone_change == "neutral":
                 tone_change = "positive"  # Default neutral to positive for memory
-            update_user_memory(guild_id, user_id, user_input, reply, tone_change)
+            update_user_memory(guild_id, user_id, user_input, reply,
+                               tone_change)
         else:
             await message.channel.send(
                 "The dragon is silent... (No response generated by AI.)")
