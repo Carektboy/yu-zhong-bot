@@ -295,44 +295,39 @@ async def on_ready():
         logger.error(f"Failed to sync slash commands: {e}")
 
 
-async def safe_followup_send(interaction,
-                             message,
-                             ephemeral=False,
-                             max_retries=3):
-    """Safely send a followup message with retry logic"""
-    for attempt in range(max_retries):
-        try:
+async def safe_send_response(interaction, message, ephemeral=False):
+    """Safely send a response or followup message"""
+    try:
+        if interaction.response.is_done():
             await interaction.followup.send(message, ephemeral=ephemeral)
-            return
-        except discord.HTTPException as e:
-            if e.status == 429:  # Rate limited
-                wait_time = 2**attempt + random.uniform(0, 1)
-                logger.warning(
-                    f"Rate limited, waiting {wait_time:.2f}s before retry {attempt + 1}"
-                )
-                await asyncio.sleep(wait_time)
+        else:
+            await interaction.response.send_message(message, ephemeral=ephemeral)
+    except Exception as e:
+        logger.error(f"Failed to send response: {e}")
+        # Try the other method if one fails
+        try:
+            if interaction.response.is_done():
+                await interaction.response.send_message(message, ephemeral=ephemeral)
             else:
-                raise e
-    logger.error(f"Failed to send message after {max_retries} attempts")
+                await interaction.followup.send(message, ephemeral=ephemeral)
+        except Exception as e2:
+            logger.error(f"Both response methods failed: {e2}")
 
 
 @bot.tree.command(name="arise",
                   description="Activate Yu Zhong in this server.")
 @app_commands.checks.has_permissions(administrator=True)
 async def arise(interaction: discord.Interaction):
-    # Defer the interaction immediately to acknowledge it
-    await interaction.response.defer(ephemeral=True)
-
     guild_id_str = str(interaction.guild_id)
     if guild_id_str is None:
-        await safe_followup_send(interaction,
+        await safe_send_response(interaction,
                                  "This command can only be used in a server.",
                                  ephemeral=True)
         return
 
     active_guilds[guild_id_str] = True
     save_enabled_guilds()
-    await safe_followup_send(interaction,
+    await safe_send_response(interaction,
                              "Yu Zhong has risen from the abyss...",
                              ephemeral=True)
 
@@ -340,19 +335,16 @@ async def arise(interaction: discord.Interaction):
 @bot.tree.command(name="stop", description="Put Yu Zhong back to rest.")
 @app_commands.checks.has_permissions(administrator=True)
 async def stop(interaction: discord.Interaction):
-    # Defer the interaction immediately
-    await interaction.response.defer(ephemeral=True)
-
     guild_id_str = str(interaction.guild_id)
     if guild_id_str is None:
-        await safe_followup_send(interaction,
+        await safe_send_response(interaction,
                                  "This command can only be used in a server.",
                                  ephemeral=True)
         return
 
     active_guilds[guild_id_str] = False
     save_enabled_guilds()
-    await safe_followup_send(interaction,
+    await safe_send_response(interaction,
                              "Yu Zhong has returned to the abyss.",
                              ephemeral=True)
 
@@ -365,13 +357,11 @@ MEMORY_DIR = "user_memories"
                   description="Reset Yu Zhong's memory for this server.")
 @app_commands.checks.has_permissions(administrator=True)
 async def reset(interaction: discord.Interaction):
-    # Defer the interaction immediately
-    await interaction.response.defer(ephemeral=True)
-
     guild_id = str(interaction.guild_id)
     if guild_id is None:
-        await interaction.followup.send(
-            "This command can only be used in a server.", ephemeral=True)
+        await safe_send_response(interaction,
+                                 "This command can only be used in a server.",
+                                 ephemeral=True)
         return
 
     removed = False
@@ -397,12 +387,11 @@ async def reset(interaction: discord.Interaction):
             removed = True
 
     if removed:
-        await safe_followup_send(
-            interaction,
-            "Yu Zhong's memory has been purged for this server.",
-            ephemeral=True)
+        await safe_send_response(interaction,
+                                 "Yu Zhong's memory has been purged for this server.",
+                                 ephemeral=True)
     else:
-        await safe_followup_send(interaction,
+        await safe_send_response(interaction,
                                  "No memory found to reset for this server.",
                                  ephemeral=True)
 
@@ -410,17 +399,15 @@ async def reset(interaction: discord.Interaction):
 @bot.tree.command(name="patch",
                   description="Shows the latest MLBB patch summary.")
 async def patch(interaction: discord.Interaction):
-    # Defer the interaction because fetching patch notes can take time
-    await interaction.response.defer(
-    )  # False by default, so visible to everyone
+    # Defer for longer operations
+    await interaction.response.defer()
 
     summary = get_latest_patch_notes()
     # Discord message limit is 2000 characters. Truncate if necessary.
     if len(summary) > 1900:  # Leave some room for the prefix
         summary = summary[:1897] + "..."
 
-    await safe_followup_send(
-        interaction,
+    await interaction.followup.send(
         f"\U0001F4DC **Latest Patch Notes Summary:**\n```{summary}```")
 
 
@@ -472,22 +459,17 @@ async def search(interaction: discord.Interaction, query: str):
             # Discord message limit handling
             if len(reply) > 1900:
                 reply = reply[:1897] + "..."
-            await safe_followup_send(
-                interaction, f"🔍 **Search Results for '{query}':**\n\n{reply}")
+            await interaction.followup.send(f"🔍 **Search Results for '{query}':**\n\n{reply}")
         else:
-            await safe_followup_send(
-                interaction,
-                "My search through the arcane knowledge yields nothing... (No response generated.)"
-            )
+            await interaction.followup.send(
+                "My search through the arcane knowledge yields nothing... (No response generated.)")
 
     except Exception as e:
         logger.error(
             f"Search command error for query '{query}' by {interaction.user.display_name}: {e}"
         )
-        await safe_followup_send(
-            interaction,
-            "The search spell backfired... (An error occurred while processing your search.)"
-        )
+        await interaction.followup.send(
+            "The search spell backfired... (An error occurred while processing your search.)")
 
 
 @bot.event
