@@ -375,6 +375,59 @@ async def patch(interaction: discord.Interaction):
         f"\U0001F4DC **Latest Patch Notes Summary:**\n```{summary}```")
 
 
+@bot.tree.command(name="search",
+                  description="Search for information with Yu Zhong's knowledge.")
+async def search(interaction: discord.Interaction, query: str):
+    # Defer the interaction because AI processing can take time
+    await interaction.response.defer()
+
+    # Check if Shapes.inc client is initialized
+    if not shapes_client:
+        await interaction.followup.send(
+            "My arcane powers are dormant... (AI service unavailable.)")
+        return
+
+    try:
+        # Get patch notes for context
+        patch_notes = get_latest_patch_notes()
+        user_display_name = interaction.user.display_name
+        
+        # Create search-specific system message
+        search_personality = f"{personality}\n\nYou are being asked to search for information about: '{query}'. Provide helpful, accurate information while maintaining your Yu Zhong personality. Be informative but keep your characteristic wit and confidence."
+        
+        messages = [
+            {"role": "system", "content": search_personality},
+            {"role": "user", "content": f"Search for information about: {query}\n\n[Context: Latest MLBB Patch Notes]\n{patch_notes}\n\n[User Info: Address the user as '{user_display_name}' in your response, not by any model or API names]"}
+        ]
+
+        # Use asyncio.to_thread for blocking API calls
+        response_completion = await asyncio.to_thread(
+            shapes_client.chat.completions.create,
+            model=SHAPESINC_SHAPE_MODEL,
+            messages=messages,
+            max_tokens=400,  # Slightly more tokens for search results
+            temperature=0.7
+        )
+
+        reply = ""
+        if response_completion and response_completion.choices and response_completion.choices[0].message:
+            reply = response_completion.choices[0].message.content.strip()
+
+        if reply:
+            # Discord message limit handling
+            if len(reply) > 1900:
+                reply = reply[:1897] + "..."
+            await interaction.followup.send(f"🔍 **Search Results for '{query}':**\n\n{reply}")
+        else:
+            await interaction.followup.send(
+                "My search through the arcane knowledge yields nothing... (No response generated.)")
+
+    except Exception as e:
+        logger.error(f"Search command error for query '{query}' by {interaction.user.display_name}: {e}")
+        await interaction.followup.send(
+            "The search spell backfired... (An error occurred while processing your search.)")
+
+
 @bot.event
 async def on_message(message):
     # Ignore messages from bots and messages outside of a guild (e.g., DMs)
@@ -394,8 +447,15 @@ async def on_message(message):
         return
 
     user_input = message.content.strip()
-    # Ignore empty messages
-    if not user_input:
+    
+    # Check for images in the message
+    has_images = len(message.attachments) > 0 and any(
+        attachment.content_type and attachment.content_type.startswith('image/')
+        for attachment in message.attachments
+    )
+    
+    # Ignore empty messages unless there are images
+    if not user_input and not has_images:
         await bot.process_commands(message)
         return
 
@@ -431,8 +491,37 @@ async def on_message(message):
     # Enhance input with latest patch notes and user context
     patch_notes = get_latest_patch_notes()
     user_display_name = message.author.display_name
-    enhanced_input = f"{user_input}\n\n[Context: Latest MLBB Patch Notes]\n{patch_notes}\n\n[User Info: Address the user as '{user_display_name}' in your response, not by any model or API names]"
-    messages.append({"role": "user", "content": enhanced_input})
+    
+    # Prepare the user message content
+    if has_images:
+        # For images, create a message with both text and image content
+        image_urls = [attachment.url for attachment in message.attachments 
+                     if attachment.content_type and attachment.content_type.startswith('image/')]
+        
+        # Create content array for vision model
+        content = []
+        
+        # Add text if present
+        if user_input:
+            enhanced_input = f"{user_input}\n\n[Context: Latest MLBB Patch Notes]\n{patch_notes}\n\n[User Info: Address the user as '{user_display_name}' in your response, not by any model or API names]"
+            content.append({"type": "text", "text": enhanced_input})
+        else:
+            # Default text for image-only messages
+            enhanced_input = f"Describe what you see in this image with your characteristic Yu Zhong personality.\n\n[Context: Latest MLBB Patch Notes]\n{patch_notes}\n\n[User Info: Address the user as '{user_display_name}' in your response, not by any model or API names]"
+            content.append({"type": "text", "text": enhanced_input})
+        
+        # Add images
+        for image_url in image_urls:
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": image_url}
+            })
+        
+        messages.append({"role": "user", "content": content})
+    else:
+        # Text-only message (original behavior)
+        enhanced_input = f"{user_input}\n\n[Context: Latest MLBB Patch Notes]\n{patch_notes}\n\n[User Info: Address the user as '{user_display_name}' in your response, not by any model or API names]"
+        messages.append({"role": "user", "content": enhanced_input})
 
     try:
         # Use asyncio.to_thread for blocking API calls to avoid freezing the bot
