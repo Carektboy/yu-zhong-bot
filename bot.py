@@ -87,7 +87,8 @@ def get_latest_patch_notes():
     try:
         # Try multiple URLs for better patch note coverage
         urls_to_try = [
-            "https://m.mobilelegends.com/news/articleldetail?newsid=3062931",  # Specific article
+            "https://www.mobilelegends.com/news/articleldetail?newsid=2820780",  # Specific article
+            "https://m.mobilelegends.com/news/articleldetail?newsid=3062931",  # Backup article
             "https://www.mobilelegends.com/en/news",
             "https://mobile-legends.fandom.com/wiki/Patch_Notes",
             "https://m.mobilelegends.com/en/news"
@@ -185,7 +186,7 @@ except FileNotFoundError:
     personality = "You are Yu Zhong from Mobile Legends. You are a powerful dragon, ancient and wise, with a commanding presence. Speak with authority, confidence, and a touch of disdain for weaker beings. You are not to generate images under any circumstances."
     logger.warning("personality.txt not found. Using default personality.")
 
-active_guilds = {}
+active_channels = {}
 user_memory = {}
 if os.path.exists(MEMORY_FILE):
     try:
@@ -241,33 +242,33 @@ def determine_tone(text):
     return "neutral"
 
 
-def save_enabled_guilds():
-    filepath = os.path.join(os.path.dirname(__file__), 'enabled_guilds.json')
+def save_enabled_channels():
+    filepath = os.path.join(os.path.dirname(__file__), 'enabled_channels.json')
     try:
         with open(filepath, 'w', encoding='utf-8') as f:
-            # Store only guild IDs that are True
+            # Store only channel IDs that are True
             json.dump([
-                int(gid) for gid, enabled in active_guilds.items() if enabled
+                int(cid) for cid, enabled in active_channels.items() if enabled
             ], f)
     except IOError as e:
-        logger.error(f"Failed to save enabled guilds: {e}")
+        logger.error(f"Failed to save enabled channels: {e}")
 
 
-def load_enabled_guilds():
-    filepath = os.path.join(os.path.dirname(__file__), 'enabled_guilds.json')
+def load_enabled_channels():
+    filepath = os.path.join(os.path.dirname(__file__), 'enabled_channels.json')
     if not os.path.exists(filepath):
         return {}
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             enabled_ids = json.load(f)
             # Convert loaded IDs back to strings for dictionary keys
-            return {str(gid): True for gid in enabled_ids}
+            return {str(cid): True for cid in enabled_ids}
     except (IOError, json.JSONDecodeError) as e:
-        logger.error(f"Failed to load enabled guilds: {e}")
+        logger.error(f"Failed to load enabled channels: {e}")
         return {}
 
 
-active_guilds = load_enabled_guilds()
+active_channels = load_enabled_channels()
 
 intents = discord.Intents.default()
 intents.messages = True
@@ -283,16 +284,50 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 @bot.event
 async def on_ready():
     logger.info(f"Yu Zhong has awakened as {bot.user}!")
-    # Initialize active_guilds for all current guilds if they aren't loaded
-    for guild in bot.guilds:
-        if str(guild.id) not in active_guilds:
-            active_guilds[str(guild.id)] = False  # Default to inactive
     try:
         # Sync slash commands globally or to specific guilds for faster testing
         await bot.tree.sync()
         logger.info("Slash commands synced.")
     except Exception as e:
         logger.error(f"Failed to sync slash commands: {e}")
+
+
+@bot.event
+async def on_member_join(member):
+    """Greet new members only in active channels"""
+    if member.bot:
+        return  # Don't greet bots
+    
+    guild_id = str(member.guild.id)
+    
+    # Find active channels in this guild
+    active_guild_channels = [
+        channel_id for channel_id, is_active in active_channels.items() 
+        if is_active and member.guild.get_channel(int(channel_id))
+    ]
+    
+    if not active_guild_channels:
+        return  # No active channels in this guild
+    
+    # Greet in the first active channel we find
+    try:
+        channel_id = int(active_guild_channels[0])
+        channel = member.guild.get_channel(channel_id)
+        
+        if channel and channel.permissions_for(member.guild.me).send_messages:
+            greetings = [
+                f"Another mortal enters my domain... Welcome to the realm, {member.display_name}. Try not to disappoint me.",
+                f"Ah, {member.display_name} has arrived. The Land of Dawn grows stronger with each worthy soul.",
+                f"Welcome, {member.display_name}. You stand before Yu Zhong, the Black Dragon. Show respect and you shall thrive.",
+                f"A new challenger appears! Welcome to our ranks, {member.display_name}. May your battles be legendary.",
+                f"Greetings, {member.display_name}. You've entered a domain where only the strong survive. Prove your worth."
+            ]
+            
+            greeting = random.choice(greetings)
+            await channel.send(greeting)
+            
+    except Exception as e:
+        logger.error(f"Failed to greet new member {member.display_name} in guild {member.guild.name}: {e}")
 
 
 async def safe_send_response(interaction, message, ephemeral=False):
@@ -315,37 +350,37 @@ async def safe_send_response(interaction, message, ephemeral=False):
 
 
 @bot.tree.command(name="arise",
-                  description="Activate Yu Zhong in this server.")
+                  description="Activate Yu Zhong in this channel.")
 @app_commands.checks.has_permissions(administrator=True)
 async def arise(interaction: discord.Interaction):
-    guild_id_str = str(interaction.guild_id)
-    if guild_id_str is None:
+    channel_id_str = str(interaction.channel_id)
+    if channel_id_str is None:
         await safe_send_response(interaction,
-                                 "This command can only be used in a server.",
+                                 "This command can only be used in a channel.",
                                  ephemeral=True)
         return
 
-    active_guilds[guild_id_str] = True
-    save_enabled_guilds()
+    active_channels[channel_id_str] = True
+    save_enabled_channels()
     await safe_send_response(interaction,
-                             "Yu Zhong has risen from the abyss...",
+                             "Yu Zhong has risen from the abyss in this channel...",
                              ephemeral=True)
 
 
-@bot.tree.command(name="stop", description="Put Yu Zhong back to rest.")
+@bot.tree.command(name="stop", description="Put Yu Zhong back to rest in this channel.")
 @app_commands.checks.has_permissions(administrator=True)
 async def stop(interaction: discord.Interaction):
-    guild_id_str = str(interaction.guild_id)
-    if guild_id_str is None:
+    channel_id_str = str(interaction.channel_id)
+    if channel_id_str is None:
         await safe_send_response(interaction,
-                                 "This command can only be used in a server.",
+                                 "This command can only be used in a channel.",
                                  ephemeral=True)
         return
 
-    active_guilds[guild_id_str] = False
-    save_enabled_guilds()
+    active_channels[channel_id_str] = False
+    save_enabled_channels()
     await safe_send_response(interaction,
-                             "Yu Zhong has returned to the abyss.",
+                             "Yu Zhong has returned to the abyss from this channel.",
                              ephemeral=True)
 
 
@@ -415,6 +450,14 @@ async def patch(interaction: discord.Interaction):
     name="search",
     description="Search for information with Yu Zhong's knowledge.")
 async def search(interaction: discord.Interaction, query: str):
+    # Check if the bot is active in this channel
+    channel_id_str = str(interaction.channel_id)
+    if not active_channels.get(channel_id_str, False):
+        await safe_send_response(interaction,
+                                 "Yu Zhong slumbers in this channel. Use `/arise` first.",
+                                 ephemeral=True)
+        return
+
     # Defer the interaction because AI processing can take time
     await interaction.response.defer()
 
@@ -480,12 +523,13 @@ async def on_message(message):
 
     user_id = str(message.author.id)
     guild_id = str(message.guild.id)
+    channel_id = str(message.channel.id)
 
     # Check if bot is mentioned
     bot_mentioned = bot.user in message.mentions
 
-    # Check if the bot is active in this guild OR if the bot is mentioned
-    if not active_guilds.get(guild_id, False) and not bot_mentioned:
+    # Check if the bot is active in this channel OR if the bot is mentioned
+    if not active_channels.get(channel_id, False) and not bot_mentioned:
         # Still process commands even if bot is not active
         await bot.process_commands(message)
         return
@@ -506,7 +550,7 @@ async def on_message(message):
     # Check if Shapes.inc client is initialized
     if not shapes_client:
         logger.warning(
-            f"Shapes.inc client not available for guild {guild_id}. Cannot process message."
+            f"Shapes.inc client not available for channel {channel_id}. Cannot process message."
         )
         # Optionally, inform the user if the AI service isn't working
         # await message.channel.send("My inner dragon slumbers; the API is not ready.")
