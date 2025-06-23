@@ -229,10 +229,10 @@ def update_user_memory(guild_id, user_id, user_input, reply, tone_change):
 
 def determine_tone(text):
     rude_keywords = [
-        "stupid", "dumb", "trash", "hate", "idiot", "suck", "cringe"
+        "stupid", "dumb", "trash", "hate", "idiot", "suck", "cringe", "dumb"< "fuck", "bitch"
     ]
     kind_keywords = [
-        "thank", "please", "good", "love", "awesome", "great", "cool"
+        "thank", "please", "good", "love", "awesome", "great", "cool", "amazing", "great"
     ]
     text = text.lower()
     if any(word in text for word in rude_keywords):
@@ -363,7 +363,7 @@ async def arise(interaction: discord.Interaction):
     active_channels[channel_id_str] = True
     save_enabled_channels()
     await safe_send_response(interaction,
-                             "Yu Zhong has risen from the abyss in this channel...",
+                             "Yu Zhong reigns over this channel...",
                              ephemeral=True)
 
 
@@ -380,7 +380,7 @@ async def stop(interaction: discord.Interaction):
     active_channels[channel_id_str] = False
     save_enabled_channels()
     await safe_send_response(interaction,
-                             "Yu Zhong has returned to the abyss from this channel.",
+                             "Yu Zhong no longer reigns over this channel.",
                              ephemeral=True)
 
 
@@ -454,7 +454,7 @@ async def search(interaction: discord.Interaction, query: str):
     channel_id_str = str(interaction.channel_id)
     if not active_channels.get(channel_id_str, False):
         await safe_send_response(interaction,
-                                 "Yu Zhong slumbers in this channel. Use `/arise` first.",
+                                 "Yu Zhong's shows no interest in this channel. Use `/arise` first.",
                                  ephemeral=True)
         return
 
@@ -566,11 +566,11 @@ async def on_message(message):
 
     # Determine and add tone description to the system message
     pos, neg = memory_data["tone"]["positive"], memory_data["tone"]["negative"]
-    tone_desc = "Neutral tone. Respond confidently and wittily, briefly."
+    tone_desc = "Neutral. this person is neutral speak normal tone not rude nor friendly."
     if pos > neg:
-        tone_desc = "You like this mortal. Be forgiving, witty, and confident."
+        tone_desc = "You like this person. Be good to them, they are your friend."
     elif neg > pos:
-        tone_desc = "This mortal has been rude. Be cold, dismissive, brief."
+        tone_desc = "This person has been rude. Be cold, dismissive, brief, but forgiving."
     messages[0]["content"] += f"\n{tone_desc}"
 
     # Add conversational history
