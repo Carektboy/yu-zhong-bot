@@ -654,18 +654,27 @@ async def on_message(message):
     await bot.process_commands(message)
 
 
-if __name__ == "__main__":
+async def main():
     if not DISCORD_TOKEN:
         logger.critical(
             "DISCORD_TOKEN environment variable is missing. Bot cannot start.")
-    else:
-        # Start the keep-alive web server
-        keep_alive()
-        logger.info("Keep-alive web server started on port 5000")
+        return
 
-        if not SHAPESINC_API_KEY or not SHAPESINC_SHAPE_MODEL:
-            logger.critical(
-                "Shapes.inc API key or model is missing. AI functionality will be severely limited or non-functional."
-            )
+    # Start the keep-alive Flask server
+    keep_alive()
+    logger.info("Keep-alive web server started on port 5000")
 
-        bot.run(DISCORD_TOKEN)
+    if not SHAPESINC_API_KEY or not SHAPESINC_SHAPE_MODEL:
+        logger.critical(
+            "Shapes.inc API key or model is missing. AI functionality will be severely limited or non-functional."
+        )
+
+    try:
+        await bot.login(DISCORD_TOKEN)
+        await bot.connect()
+    except discord.errors.HTTPException as e:
+        logger.error(f"Rate limited or HTTP error: {e}")
+        await asyncio.sleep(60)  # Optional retry or exit
+
+if __name__ == "__main__":
+    asyncio.run(main())
