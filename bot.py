@@ -229,7 +229,7 @@ def update_user_memory(guild_id, user_id, user_input, reply, tone_change):
 
 def determine_tone(text):
     rude_keywords = [
-        "stupid", "dumb", "trash", "hate", "idiot", "suck", "cringe", "dumb"< "fuck", "bitch"
+        "stupid", "dumb", "trash", "hate", "idiot", "suck", "cringe", "dumb", "fuck", "bitch"
     ]
     kind_keywords = [
         "thank", "please", "good", "love", "awesome", "great", "cool", "amazing", "great"
