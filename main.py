@@ -8,26 +8,23 @@ import asyncio
 import time
 from dotenv import load_dotenv
 from openai import OpenAI
-from keep_alive import keep_alive
+from keep_alive import keep_alive # Make sure keep_alive.py is in the same directory
 
+# Load environment variables first
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 SHAPESINC_API_KEY = os.getenv("SHAPESINC_API_KEY")
-SHAPESINC_MODEL_USERNAME = os.getenv("SHAPESINC_MODEL_USERNAME")
+SHAPESINC_MODEL_USERNAME = os.getenv("SHAPESINC_MODEL_USERNAME") # This should be "shapesinc/yuzhong-eqf1" in your .env
 
-shapes_client = OpenAI(
-    api_key=SHAPESINC_API_KEY,
-    base_url="https://api.shapes.inc/v1/", # Crucial correction
-)
-bot.shapes_client = shapes_client
-bot.SHAPESINC_SHAPE_MODEL = SHAPESINC_MODEL_USERNAME
-
+# Configure logging
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s:%(levelname)s:%(name)s: %(message)s')
 logger = logging.getLogger('YuZhongBot')
 
+# Define DEFAULT_TONE at the top level, before any functions that use it
+DEFAULT_TONE = {"positive": 0, "negative": 0, "neutral": 0} # Corrected: Added "neutral" key
+
 MAX_MEMORY_PER_USER_TOKENS = 5000
-DEFAULT_TONE = {"positive": 0, "negative": 0}
 MEMORY_DIR = "user_memories"
 ENABLED_CHANNELS_FILE = "enabled_channels.json"
 
@@ -61,21 +58,27 @@ def save_enabled_channels(active_channels_data):
 
 active_channels = load_enabled_channels()
 
+# Define the bot's intents
 intents = discord.Intents.default()
-intents.message_content = True
-intents.guilds = True
-intents.members = True
+intents.message_content = True # Needed to read message content
+intents.guilds = True # Needed for guild events
+intents.members = True # Needed for guild member information (if used in cogs)
 
+# Initialize the bot object - THIS MUST HAPPEN BEFORE YOU ACCESS 'bot'
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# Assign these properties AFTER bot is defined, but before on_ready is called
 bot.active_channels = active_channels
 bot.save_enabled_channels = lambda: save_enabled_channels(bot.active_channels)
 bot.MEMORY_DIR = MEMORY_DIR
 bot.personality = personality
 bot.DEFAULT_TONE = DEFAULT_TONE
 bot.MAX_MEMORY_PER_USER_TOKENS = MAX_MEMORY_PER_USER_TOKENS
-bot.shapes_client = shapes_client
-bot.SHAPESINC_SHAPE_MODEL = SHAPESINC_SHAPE_MODEL
+
+# These will be assigned in on_ready, after shapes_client is initialized in main()
+bot.shapes_client = None
+bot.SHAPESINC_SHAPE_MODEL = None
+
 
 async def safe_send_response(interaction: discord.Interaction, message: str, ephemeral: bool = False):
     try:
@@ -92,19 +95,26 @@ async def safe_send_response(interaction: discord.Interaction, message: str, eph
 
 bot.safe_send_response = safe_send_response
 
+
+# This will be called when the bot is ready
 @bot.event
 async def on_ready():
     logger.info(f'Logged in as {bot.user.name} ({bot.user.id})')
+
+    # Initialize Shapes.inc client and assign to bot here, where bot is guaranteed to exist
     if SHAPESINC_API_KEY and SHAPESINC_MODEL_USERNAME:
+        # Re-initialize shapes_client here using the correct base_url
         bot.shapes_client = OpenAI(
-            base_url="https://api.shapes.inc",
+            base_url="https://api.shapes.inc/v1/", # Correct base_url
             api_key=SHAPESINC_API_KEY,
+            timeout=60.0, # Good practice for API calls
         )
-        bot.SHAPESINC_SHAPE_MODEL = SHAPESINC_MODEL_USERNAME
+        bot.SHAPESINC_SHAPE_MODEL = SHAPESINC_MODEL_USERNAME # Use the value from .env, which should be "shapesinc/yuzhong-eqf1"
         logger.info("Shapes.inc client initialized.")
     else:
         logger.warning("SHAPESINC_API_KEY or SHAPESINC_MODEL_USERNAME not set. AI features will be disabled.")
 
+    # Load cogs
     initial_extensions = [
         "cogs.admin",
         "cogs.mlbb",
@@ -166,20 +176,30 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
+# Asynchronous main function to run the bot and keep-alive server
 async def main():
     if not DISCORD_TOKEN:
         logger.critical("DISCORD_TOKEN environment variable not set. Exiting.")
         return
 
+    # Start the Flask keep-alive server in a separate thread
     keep_alive()
+    logger.info("Keep-alive web server started.")
 
+    # Run the Discord bot
     try:
         await bot.start(DISCORD_TOKEN)
     except discord.errors.LoginFailure as e:
         logger.critical(f"Failed to log in: {e}. Check your DISCORD_TOKEN.")
     except Exception as e:
         logger.critical(f"An unexpected error occurred during bot startup: {e}")
-      
 
+# Entry point of the script
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Bot shutting down...")
+        asyncio.run(bot.close())
+    except Exception as e:
+        logger.error(f"An unhandled error occurred: {e}")
