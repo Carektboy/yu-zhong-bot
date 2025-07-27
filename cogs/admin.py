@@ -52,7 +52,6 @@ class AdminCog(commands.Cog):
             os.makedirs(self.MEMORY_DIR)
 
         for filename in os.listdir(self.MEMORY_DIR):
-      
             if filename.startswith(f"user_{guild_id}_") and filename.endswith(".json"):
                 try:
                     os.remove(os.path.join(self.MEMORY_DIR, filename))
