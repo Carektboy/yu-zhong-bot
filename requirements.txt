@@ -2,6 +2,7 @@ discord.py
 openai
 python-dotenv
 requests
+flask
 aiohttp
 beautifulsoup4
 PyNaCl
