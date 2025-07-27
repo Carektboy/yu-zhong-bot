@@ -8,6 +8,7 @@ import asyncio
 import time
 from dotenv import load_dotenv
 from openai import OpenAI
+from keep_alive import keep_alive
 
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -166,12 +167,15 @@ async def main():
         logger.critical("DISCORD_TOKEN environment variable not set. Exiting.")
         return
 
+    keep_alive()
+
     try:
         await bot.start(DISCORD_TOKEN)
     except discord.errors.LoginFailure as e:
         logger.critical(f"Failed to log in: {e}. Check your DISCORD_TOKEN.")
     except Exception as e:
         logger.critical(f"An unexpected error occurred during bot startup: {e}")
+      
 
 if __name__ == "__main__":
     asyncio.run(main())
