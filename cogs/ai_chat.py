@@ -5,6 +5,7 @@ import os
 import json
 import logging
 import asyncio
+from openai import OpenAI
 
 logger = logging.getLogger('YuZhongBot')
 
@@ -39,7 +40,7 @@ class AIChatCog(commands.Cog):
                 logger.error(f"Error decoding memory for user {user_id} in guild {guild_id}: {e}")
                 return {"log": [], "tone": self.DEFAULT_TONE.copy()}
             except Exception as e:
-                logger.error(f"Unexpected error loading memory for user {user_id} in guild {guild_id}: {e}")
+                logger.error(f"An unexpected error occurred while loading memory for user {user_id} in guild {guild_id}: {e}")
                 return {"log": [], "tone": self.DEFAULT_TONE.copy()}
         return {"log": [], "tone": self.DEFAULT_TONE.copy()}
 
@@ -75,14 +76,14 @@ class AIChatCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message):
-        if message.author == self.bot.user or message.author.bot:
+        if message.author == self.bot.user:
+            return
+
+        if message.author.bot:
             return
 
         if not message.content:
             return
-
-        if not message.guild:
-            return  # Optional: ignore DMs
 
         channel_id_str = str(message.channel.id)
         guild_id = str(message.guild.id)
@@ -96,13 +97,16 @@ class AIChatCog(commands.Cog):
 
         async with message.channel.typing():
             if not self.shapes_client:
-                logger.warning(f"Shapes.inc client not available for channel {channel_id_str}.")
+                logger.warning(
+                    f"Shapes.inc client not available for channel {channel_id_str}. Cannot process message."
+                )
                 await message.reply("My arcane powers are dormant... (AI service unavailable.)")
                 return
 
             memory_data = self.load_user_memory(guild_id, user_id)
 
             messages = [{"role": "system", "content": self.personality}]
+
             pos, neg = memory_data["tone"]["positive"], memory_data["tone"]["negative"]
             tone_desc = "Neutral. This person is neutral, speak normal tone, not rude nor friendly."
             if pos > neg:
@@ -112,6 +116,7 @@ class AIChatCog(commands.Cog):
             messages[0]["content"] += f"\n{tone_desc}"
 
             messages.extend(memory_data["log"])
+
             user_input = message.content
             messages.append({"role": "user", "content": user_input})
 
@@ -144,11 +149,9 @@ class AIChatCog(commands.Cog):
 
     @app_commands.command(
         name="search",
-        description="Search for information with Yu Zhong's knowledge."
-    )
+        description="Search for information with Yu Zhong's knowledge.")
     async def search(self, interaction: discord.Interaction, query: str):
         channel_id_str = str(interaction.channel_id)
-
         if interaction.guild and not self.bot.active_channels.get(channel_id_str):
             await self.safe_send_response(interaction, "My power is not active in this channel. Use `/arise` to awaken me.", ephemeral=True)
             return
@@ -156,7 +159,8 @@ class AIChatCog(commands.Cog):
         await interaction.response.defer()
 
         if not self.shapes_client:
-            await self.safe_send_response(interaction, "My arcane powers are dormant... (AI service unavailable.)")
+            await self.safe_send_response(interaction,
+                "My arcane powers are dormant... (AI service unavailable.)")
             return
 
         try:
@@ -182,14 +186,20 @@ class AIChatCog(commands.Cog):
                 tone_desc = "This person has been rude. Be cold, dismissive, brief, but forgiving."
             search_personality += f"\n{tone_desc}"
 
-            messages = [{"role": "system", "content": search_personality}]
+            messages = [{
+                "role": "system",
+                "content": search_personality
+            }]
             messages.extend(memory_data["log"])
 
             full_query_content = f"Search for information about: {query}\n\n[User Info: Address the user as '{user_display_name}' in your response, not by any model or API names]"
             if patch_notes:
                 full_query_content += f"\n\n[Context: Latest MLBB Patch Notes]\n{patch_notes}"
 
-            messages.append({"role": "user", "content": full_query_content})
+            messages.append({
+                "role": "user",
+                "content": full_query_content
+            })
 
             reply_text = "My power wanes... I cannot fulfill this search at the moment."
             tone_change = "neutral"
@@ -217,11 +227,6 @@ class AIChatCog(commands.Cog):
 
             await self.safe_send_response(interaction, reply_text)
             self.update_user_memory(guild_id, user_id, query, reply_text, tone_change)
-
-        except Exception as e:
-            logger.error(f"Unexpected error in search command: {e}")
-            await self.safe_send_response(interaction, "A distortion disrupted my response. Please try again later.")
-
 
 async def setup(bot):
     await bot.add_cog(AIChatCog(bot))
