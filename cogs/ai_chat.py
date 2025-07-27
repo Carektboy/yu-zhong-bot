@@ -228,5 +228,6 @@ class AIChatCog(commands.Cog):
             await self.safe_send_response(interaction, reply_text)
             self.update_user_memory(guild_id, user_id, query, reply_text, tone_change)
 
+
 async def setup(bot):
     await bot.add_cog(AIChatCog(bot))
