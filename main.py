@@ -15,8 +15,12 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 SHAPESINC_API_KEY = os.getenv("SHAPESINC_API_KEY")
 SHAPESINC_MODEL_USERNAME = os.getenv("SHAPESINC_MODEL_USERNAME")
 
-SHAPESINC_SHAPE_MODEL = None
-shapes_client = None
+shapes_client = OpenAI(
+    api_key=SHAPESINC_API_KEY,
+    base_url="https://api.shapes.inc/v1/", # Crucial correction
+)
+bot.shapes_client = shapes_client
+bot.SHAPESINC_SHAPE_MODEL = SHAPESINC_MODEL_USERNAME
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s:%(levelname)s:%(name)s: %(message)s')
