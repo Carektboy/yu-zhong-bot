@@ -57,6 +57,10 @@ class AIChatCog(commands.Cog):
     def update_user_memory(self, guild_id, user_id, user_input, reply, tone_change):
         memory = self.load_user_memory(guild_id, user_id)
 
+        # IMPORTANT: When updating memory, include the display name for clarity
+        # This helps the AI understand who said what in past interactions
+        # user_input already contains the display name if on_message or search command adds it.
+        # So, we just use the user_input passed to this function.
         memory["log"].append({"role": "user", "content": user_input})
         memory["log"].append({"role": "assistant", "content": reply})
         memory["tone"][tone_change] += 1
@@ -93,7 +97,7 @@ class AIChatCog(commands.Cog):
         channel_id_str = str(message.channel.id)
         guild_id = str(message.guild.id)
         user_id = str(message.author.id)
-        user_display_name = message.author.display_name
+        user_display_name = message.author.display_name # Get the user's display name
         bot_mentioned = self.bot.user.mentioned_in(message)
 
         if not self.bot.active_channels.get(channel_id_str) and not bot_mentioned:
@@ -119,8 +123,9 @@ class AIChatCog(commands.Cog):
 
             messages.extend(memory_data["log"])
 
-            user_input = message.content
-            messages.append({"role": "user", "content": user_input})
+            # CRITICAL CHANGE: Include user_display_name in the content for API calls
+            user_input_for_api = f"{user_display_name}: {message.content}"
+            messages.append({"role": "user", "content": user_input_for_api})
 
             reply_text = "My power wanes... I cannot respond at this moment."
             tone_change = "neutral"
@@ -135,7 +140,7 @@ class AIChatCog(commands.Cog):
                 )
                 if completion and completion.choices and completion.choices[0].message:
                     reply_text = completion.choices[0].message.content.strip()
-                    tone_change = self.determine_tone(user_input)
+                    tone_change = self.determine_tone(message.content) # Use original message.content for tone detection
             except Exception as e:
                 logger.error(f"Error calling Shapes.inc API: {e}")
                 if "rate limit" in str(e).lower():
@@ -147,7 +152,8 @@ class AIChatCog(commands.Cog):
                 reply_text = reply_text[:1897] + "..."
 
             await message.reply(reply_text)
-            self.update_user_memory(guild_id, user_id, user_input, reply_text, tone_change)
+            # IMPORTANT: Store the user_input_for_api in memory so the AI sees it structured correctly in future turns
+            self.update_user_memory(guild_id, user_id, user_input_for_api, reply_text, tone_change)
 
     @app_commands.command(
         name="search",
@@ -180,7 +186,8 @@ class AIChatCog(commands.Cog):
 
             user_display_name = interaction.user.display_name
 
-            search_personality = f"{self.personality}\n\nYou are being asked to search for information about: '{query}'. Provide helpful, accurate information while maintaining your Yu Zhong personality."
+            # Add explicit instruction about usernames in the system prompt for search as well
+            search_personality = f"{self.personality}\n\nYou are being asked to search for information about: '{query}'. Provide helpful, accurate information while maintaining your Yu Zhong personality. Do not confuse other users with '{user_display_name}'."
 
             pos, neg = memory_data["tone"]["positive"], memory_data["tone"]["negative"]
             if pos > neg:
@@ -193,8 +200,9 @@ class AIChatCog(commands.Cog):
             messages = [{"role": "system", "content": search_personality}]
             messages.extend(memory_data["log"])
 
+            # CRITICAL CHANGE: Include user_display_name in the content for API calls in search command
             full_query_content = (
-                f"Search for information about: {query}\n\n"
+                f"{user_display_name}: Search for information about: {query}\n\n"
                 f"[User Info: Address the user as '{user_display_name}' in your response]"
             )
             if patch_notes:
@@ -227,7 +235,8 @@ class AIChatCog(commands.Cog):
                 reply_text = reply_text[:1897] + "..."
 
             await self.safe_send_response(interaction, reply_text)
-            self.update_user_memory(guild_id, user_id, query, reply_text, tone_change)
+            # IMPORTANT: Store the full_query_content in memory so the AI sees it structured correctly in future turns
+            self.update_user_memory(guild_id, user_id, full_query_content, reply_text, tone_change)
 
         except Exception as e:
             logger.error(f"Unexpected error in search command: {e}")
