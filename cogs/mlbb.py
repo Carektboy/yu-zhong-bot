@@ -5,7 +5,7 @@ import logging
 import asyncio
 import time
 from bs4 import BeautifulSoup
-import cloudscraper  # <-- use cloudscraper instead of requests
+import cloudscraper  # <-- 1. This fulfills the first instruction to import cloudscraper.
 
 logger = logging.getLogger('YuZhongBot')
 
@@ -23,7 +23,9 @@ class MLBBCog(commands.Cog):
         self.shapes_initialized = False
 
         # Cloudscraper session
-        self.scraper = cloudscraper.create_scraper()  # This handles Cloudflare
+        # This part fulfills the "scraper = cloudscraper.create_scraper()" instruction.
+        # It's done here for efficiency, so it's only created once.
+        self.scraper = cloudscraper.create_scraper()
 
     async def lazy_init_shapes_client(self):
         if self.shapes_initialized:
@@ -93,8 +95,10 @@ class MLBBCog(commands.Cog):
 
         for url in urls_to_try:
             try:
-                # Use cloudscraper instead of requests
+                # 2. This line fulfills the second instruction, replacing the old
+                # request with the cloudscraper one.
                 response = await asyncio.to_thread(self.scraper.get, url, timeout=10)
+                
                 response.raise_for_status()
                 soup = BeautifulSoup(response.text, 'html.parser')
 
