@@ -16,8 +16,10 @@ SHAPESINC_API_KEY = os.getenv("SHAPESINC_API_KEY")
 SHAPESINC_MODEL_USERNAME = os.getenv("SHAPESINC_MODEL_USERNAME")
 
 # Logging config
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s:%(levelname)s:%(name)s: %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s:%(levelname)s:%(name)s: %(message)s'
+)
 logger = logging.getLogger('YuZhongBot')
 
 # Constants
@@ -35,7 +37,11 @@ try:
         personality_base = f.read()
         personality = personality_base + "\n\nDo not generate images or react to image generation requests. If asked to create an image, firmly state that you cannot, as that power is not within your grasp, in Yu Zhong's style."
 except FileNotFoundError:
-    personality = "You are Yu Zhong from Mobile Legends. You are a powerful dragon, ancient and wise, with a commanding presence. Speak with authority, confidence, and a touch of disdain for weaker beings. You are not to generate images under any circumstances."
+    personality = (
+        "You are Yu Zhong from Mobile Legends. You are a powerful dragon, ancient and wise, "
+        "with a commanding presence. Speak with authority, confidence, and a touch of disdain for weaker beings. "
+        "You are not to generate images under any circumstances."
+    )
     logger.warning("personality.txt not found. Using default personality.")
 
 def load_enabled_channels():
@@ -64,6 +70,11 @@ intents.guilds = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+# Pass Shapes.inc API info to bot for lazy init inside cogs
+bot.SHAPESINC_API_KEY = SHAPESINC_API_KEY
+bot.SHAPESINC_MODEL_USERNAME = SHAPESINC_MODEL_USERNAME
+
 bot.active_channels = active_channels
 bot.save_enabled_channels = lambda: save_enabled_channels(bot.active_channels)
 bot.MEMORY_DIR = MEMORY_DIR
@@ -90,41 +101,10 @@ async def safe_send_response(interaction: discord.Interaction, message: str, eph
 
 bot.safe_send_response = safe_send_response
 
-# Event: on_ready
+# Events
 @bot.event
 async def on_ready():
     logger.info(f'Logged in as {bot.user.name} ({bot.user.id})')
-
-    if SHAPESINC_API_KEY and SHAPESINC_MODEL_USERNAME:
-        try:
-            bot.shapes_client = OpenAI(
-                base_url="https://api.shapes.inc/v1/",
-                api_key=SHAPESINC_API_KEY,
-                timeout=60.0
-            )
-
-            models_response = bot.shapes_client.models.list()
-            available_models = [model.id for model in models_response.data]
-            logger.info(f"Available models: {available_models}")
-
-            # Try to find a matching model
-            matched_model = next(
-                (m for m in available_models if SHAPESINC_MODEL_USERNAME in m or m == SHAPESINC_MODEL_USERNAME),
-                None
-            )
-
-            if matched_model:
-                bot.SHAPESINC_SHAPE_MODEL = matched_model
-                logger.info(f"Shapes.inc model resolved: {matched_model}")
-            else:
-                logger.critical(f"Model '{SHAPESINC_MODEL_USERNAME}' not found. AI features disabled.")
-                bot.shapes_client = None
-
-        except Exception as e:
-            logger.critical(f"Failed to initialize Shapes.inc client or resolve model: {e}")
-            bot.shapes_client = None
-    else:
-        logger.warning("Missing SHAPESINC_API_KEY or SHAPESINC_MODEL_USERNAME. AI disabled.")
 
     # Load cogs
     initial_extensions = [
@@ -175,7 +155,7 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
-# Main
+# Main async runner
 async def main():
     if not DISCORD_TOKEN:
         logger.critical("DISCORD_TOKEN not set. Exiting.")
