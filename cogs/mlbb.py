@@ -1,13 +1,11 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-import os
 import logging
 import asyncio
 import time
 import requests
 from bs4 import BeautifulSoup
-from openai import OpenAI
 
 logger = logging.getLogger('YuZhongBot')
 
@@ -17,15 +15,60 @@ class MLBBCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.personality = bot.personality
-        self.shapes_client = bot.shapes_client
-        self.SHAPESINC_SHAPE_MODEL = bot.SHAPESINC_SHAPE_MODEL
         self.safe_send_response = bot.safe_send_response
+
+        # Lazy init placeholders
+        self.shapes_client = None
+        self.SHAPESINC_SHAPE_MODEL = None
+        self.shapes_initialized = False
+
+    async def lazy_init_shapes_client(self):
+        if self.shapes_initialized:
+            return
+        self.shapes_initialized = True
+
+        api_key = getattr(self.bot, "SHAPESINC_API_KEY", None)
+        model_username = getattr(self.bot, "SHAPESINC_MODEL_USERNAME", None)
+
+        if not api_key or not model_username:
+            logger.warning("Shapes.inc API key or model username missing; AI features disabled.")
+            return
+
+        try:
+            from openai import OpenAI
+
+            self.shapes_client = OpenAI(
+                base_url="https://api.shapes.inc/v1/",
+                api_key=api_key,
+                timeout=60.0
+            )
+
+            models_response = await asyncio.to_thread(self.shapes_client.models.list)
+            available_models = [model.id for model in models_response.data]
+            logger.info(f"Shapes.inc available models: {available_models}")
+
+            matched_model = next(
+                (m for m in available_models if model_username in m or m == model_username),
+                None
+            )
+
+            if matched_model:
+                self.SHAPESINC_SHAPE_MODEL = matched_model
+                logger.info(f"Shapes.inc model resolved: {matched_model}")
+            else:
+                logger.critical(f"Shapes.inc model '{model_username}' not found. AI features disabled.")
+                self.shapes_client = None
+        except Exception as e:
+            logger.critical(f"Failed to initialize Shapes.inc client or resolve model: {e}")
+            self.shapes_client = None
 
     async def get_latest_patch_notes(self):
         global patch_cache
         now = time.time()
         if patch_cache["data"] and (now - patch_cache["timestamp"]) < 3600:
             return patch_cache["data"]
+
+        await self.lazy_init_shapes_client()
 
         urls_to_try = [
             "https://m.mobilelegends.com/en/news",
@@ -89,6 +132,7 @@ class MLBBCog(commands.Cog):
                 logger.error(f"Error parsing {url}: {e}")
                 continue
 
+        # If we have summary text and AI client ready, summarize with AI
         if final_summary_found and self.shapes_client and self.SHAPESINC_SHAPE_MODEL:
             try:
                 summarization_prompt = (
@@ -114,7 +158,7 @@ class MLBBCog(commands.Cog):
                     patch_cache["timestamp"] = now
                     return summary
             except Exception as e:
-                logger.warning(f"AI summarization of patch notes failed: {e}. Falling back to scraped text.")
+                logger.warning(f"AI summarization failed: {e}. Using scraped text fallback.")
 
         if not final_summary_found:
             final_summary_found = "Unable to fetch current patch notes. The Land of Dawn's secrets remain hidden for now."
