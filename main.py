@@ -7,175 +7,175 @@ import logging
 import asyncio
 from dotenv import load_dotenv
 from openai import OpenAI
-from keep_alive import keep_alive  # Make sure keep_alive.py is in the same directory
+from keep_alive import keep_alive
 
 # Load environment variables
 load_dotenv()
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-SHAPESINC_API_KEY = os.getenv("SHAPESINC_API_KEY")
-SHAPESINC_MODEL_USERNAME = os.getenv("SHAPESINC_MODEL_USERNAME")
+t = os.getenv("DISCORD_TOKEN")
+a = os.getenv("SHAPESINC_API_KEY")
+u = os.getenv("SHAPESINC_MODEL_USERNAME")
 
 # Logging config
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s:%(levelname)s:%(name)s: %(message)s'
 )
-logger = logging.getLogger('YuZhongBot')
+l = logging.getLogger('YuZhongBot')
 
 # Constants
-DEFAULT_TONE = {"positive": 0, "negative": 0, "neutral": 0}
-MAX_MEMORY_PER_USER_TOKENS = 5000
-MEMORY_DIR = "user_memories"
-ENABLED_CHANNELS_FILE = "enabled_channels.json"
+dt = {"positive": 0, "negative": 0, "neutral": 0}
+mt = 5000
+m = "user_memories"
+ecf = "enabled_channels.json"
 
 # Ensure memory dir exists
-os.makedirs(MEMORY_DIR, exist_ok=True)
+os.makedirs(m, exist_ok=True)
 
 # Load personality
 try:
     with open("personality.txt", "r", encoding="utf-8") as f:
-        personality_base = f.read()
-        personality = personality_base + "\n\nDo not generate images or react to image generation requests. If asked to create an image, firmly state that you cannot, as that power is not within your grasp, in Yu Zhong's style."
+        pb = f.read()
+        p = pb + "\n\nDo not generate images or react to image generation requests. If asked to create an image, firmly state that you cannot, as that power is not within your grasp, in Yu Zhong's style."
 except FileNotFoundError:
-    personality = (
+    p = (
         "You are Yu Zhong from Mobile Legends. You are a powerful dragon, ancient and wise, "
         "with a commanding presence. Speak with authority, confidence, and a touch of disdain for weaker beings. "
         "You are not to generate images under any circumstances."
     )
-    logger.warning("personality.txt not found. Using default personality.")
+    l.warning("personality.txt not found. Using default personality.")
 
-def load_enabled_channels():
-    if os.path.exists(ENABLED_CHANNELS_FILE):
+def l_e_c():
+    if os.path.exists(ecf):
         try:
-            with open(ENABLED_CHANNELS_FILE, "r", encoding="utf-8") as f:
+            with open(ecf, "r", encoding="utf-8") as f:
                 return json.load(f)
         except json.JSONDecodeError as e:
-            logger.error(f"Error decoding {ENABLED_CHANNELS_FILE}: {e}")
+            l.error(f"Error decoding {ecf}: {e}")
             return {}
     return {}
 
-def save_enabled_channels(active_channels_data):
+def s_e_c(a_d):
     try:
-        with open(ENABLED_CHANNELS_FILE, "w", encoding="utf-8") as f:
-            json.dump(active_channels_data, f, indent=4)
+        with open(ecf, "w", encoding="utf-8") as f:
+            json.dump(a_d, f, indent=4)
     except IOError as e:
-        logger.error(f"Failed to save enabled channels: {e}")
+        l.error(f"Failed to save enabled channels: {e}")
 
-active_channels = load_enabled_channels()
+ac = l_e_c()
 
 # Bot setup
-intents = discord.Intents.default()
-intents.message_content = True
-intents.guilds = True
-intents.members = True
+i = discord.Intents.default()
+i.message_content = True
+i.guilds = True
+i.members = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+b = commands.Bot(command_prefix="!", intents=i)
 
 # Pass Shapes.inc API info to bot for lazy init inside cogs
-bot.SHAPESINC_API_KEY = SHAPESINC_API_KEY
-bot.SHAPESINC_MODEL_USERNAME = SHAPESINC_MODEL_USERNAME
+b.SHAPESINC_API_KEY = a
+b.SHAPESINC_MODEL_USERNAME = u
 
-bot.active_channels = active_channels
-bot.save_enabled_channels = lambda: save_enabled_channels(bot.active_channels)
-bot.MEMORY_DIR = MEMORY_DIR
-bot.personality = personality
-bot.DEFAULT_TONE = DEFAULT_TONE
-bot.MAX_MEMORY_PER_USER_TOKENS = MAX_MEMORY_PER_USER_TOKENS
+b.active_channels = ac
+b.save_enabled_channels = lambda: s_e_c(b.active_channels)
+b.MEMORY_DIR = m
+b.personality = p
+b.DEFAULT_TONE = dt
+b.MAX_MEMORY_PER_USER_TOKENS = mt
 
-bot.shapes_client = None
-bot.SHAPESINC_SHAPE_MODEL = None
+b.shapes_client = None
+b.SHAPESINC_SHAPE_MODEL = None
 
 # Utility: Send response safely
-async def safe_send_response(interaction: discord.Interaction, message: str, ephemeral: bool = False):
+async def s_s_r(i, mes, e = False):
     try:
-        if interaction.response.is_done():
-            await interaction.followup.send(message, ephemeral=ephemeral)
+        if i.response.is_done():
+            await i.followup.send(mes, ephemeral=e)
         else:
-            await interaction.response.send_message(message, ephemeral=ephemeral)
+            await i.response.send_message(mes, ephemeral=e)
     except Exception as e:
-        logger.error(f"Failed to send response for interaction {interaction.id}: {e}")
+        l.error(f"Failed to send response for interaction {i.id}: {e}")
         try:
-            await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
+            await i.followup.send(f"An error occurred: {e}", ephemeral=True)
         except Exception as e2:
-            logger.error(f"Both response methods failed: {e2}")
+            l.error(f"Both response methods failed: {e2}")
 
-bot.safe_send_response = safe_send_response
+b.safe_send_response = s_s_r
 
 # Events
-@bot.event
+@b.event
 async def on_ready():
-    logger.info(f'Logged in as {bot.user.name} ({bot.user.id})')
+    l.info(f'Logged in as {b.user.name} ({b.user.id})')
 
     # Load cogs
-    initial_extensions = [
+    ie = [
         "cogs.admin",
         "cogs.mlbb",
         "cogs.ai_chat",
     ]
-    for extension in initial_extensions:
+    for ext in ie:
         try:
-            await bot.load_extension(extension)
-            logger.info(f"Loaded extension: {extension}")
+            await b.load_extension(ext)
+            l.info(f"Loaded extension: {ext}")
         except commands.ExtensionError as e:
-            logger.error(f"Failed to load extension {extension}: {e}")
+            l.error(f"Failed to load extension {ext}: {e}")
 
     try:
-        synced = await bot.tree.sync()
-        logger.info(f"Synced {len(synced)} command(s).")
+        synced = await b.tree.sync()
+        l.info(f"Synced {len(synced)} command(s).")
     except Exception as e:
-        logger.error(f"Failed to sync commands: {e}")
+        l.error(f"Failed to sync commands: {e}")
 
-@bot.event
-async def on_member_join(member):
-    logger.info(f'{member.name} has joined the server!')
+@b.event
+async def on_member_join(mem):
+    l.info(f'{mem.name} has joined the server!')
 
-@bot.event
-async def on_guild_join(guild):
-    logger.info(f"Joined new guild: {guild.name} ({guild.id})")
-    default_channel = guild.system_channel or (guild.text_channels[0] if guild.text_channels else None)
-    if default_channel:
+@b.event
+async def on_guild_join(g):
+    l.info(f"Joined new guild: {g.name} ({g.id})")
+    dc = g.system_channel or (g.text_channels[0] if g.text_channels else None)
+    if dc:
         try:
-            await default_channel.send(
+            await dc.send(
                 f"Behold, I, Yu Zhong, have arrived! To activate my power in a channel, an administrator must use `/arise`."
             )
         except discord.Forbidden:
-            logger.warning(f"Missing permissions to send welcome message in {guild.name}.")
+            l.warning(f"Missing permissions to send welcome message in {g.name}.")
 
-@bot.event
-async def on_message(message):
-    if message.author.bot or not message.content or message.author == bot.user:
+@b.event
+async def on_message(mes):
+    if mes.author.bot or not mes.content or mes.author == b.user:
         return
 
-    channel_id_str = str(message.channel.id)
-    bot_mentioned = bot.user.mentioned_in(message)
+    c = str(mes.channel.id)
+    bm = b.user.mentioned_in(mes)
 
-    if not bot.active_channels.get(channel_id_str) and not bot_mentioned:
-        await bot.process_commands(message)
+    if not b.active_channels.get(c) and not bm:
+        await b.process_commands(mes)
         return
 
-    await bot.process_commands(message)
+    await b.process_commands(mes)
 
 # Main async runner
 async def main():
-    if not DISCORD_TOKEN:
-        logger.critical("DISCORD_TOKEN not set. Exiting.")
+    if not t:
+        l.critical("DISCORD_TOKEN not set. Exiting.")
         return
 
     keep_alive()
-    logger.info("Keep-alive web server started.")
+    l.info("Keep-alive web server started.")
 
     try:
-        await bot.start(DISCORD_TOKEN)
+        await b.start(t)
     except discord.errors.LoginFailure as e:
-        logger.critical(f"Failed to log in: {e}")
+        l.critical(f"Failed to log in: {e}")
     except Exception as e:
-        logger.critical(f"Unexpected startup error: {e}")
+        l.critical(f"Unexpected startup error: {e}")
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Bot shutting down...")
-        asyncio.run(bot.close())
+        l.info("Bot shutting down...")
+        asyncio.run(b.close())
     except Exception as e:
-        logger.error(f"Unhandled error: {e}")
+        l.error(f"Unhandled error: {e}")
