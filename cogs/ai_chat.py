@@ -6,287 +6,285 @@ import json
 import logging
 import asyncio
 
-logger = logging.getLogger('YuZhongBot')
+l = logging.getLogger('YuZhongBot')
 
 class AIChatCog(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-        self.personality = bot.personality
-        self.safe_send_response = bot.safe_send_response
-        self.DEFAULT_TONE = bot.DEFAULT_TONE
-        self.MAX_MEMORY_PER_USER_TOKENS = bot.MAX_MEMORY_PER_USER_TOKENS
-        self.MEMORY_DIR = bot.MEMORY_DIR
+    def __init__(self, b):
+        self.b = b
+        self.p = b.personality
+        self.r = b.safe_send_response
+        self.dt = b.DEFAULT_TONE
+        self.mt = b.MAX_MEMORY_PER_USER_TOKENS
+        self.m = b.MEMORY_DIR
 
         # Lazy init placeholders
-        self.shapes_client = None
-        self.SHAPESINC_SHAPE_MODEL = None
-        self.shapes_initialized = False
+        self.sc = None
+        self.sm = None
+        self.si = False
 
     async def lazy_init_shapes_client(self):
-        if self.shapes_initialized:
+        if self.si:
             return
-        self.shapes_initialized = True
+        self.si = True
 
-        api_key = getattr(self.bot, "SHAPESINC_API_KEY", None)
-        model_username = getattr(self.bot, "SHAPESINC_MODEL_USERNAME", None)
+        a = getattr(self.b, "SHAPESINC_API_KEY", None)
+        u = getattr(self.b, "SHAPESINC_MODEL_USERNAME", None)
 
-        if not api_key or not model_username:
-            logger.warning("Shapes.inc API key or model username missing; AI features disabled.")
+        if not a or not u:
+            l.warning("Shapes.inc API key or model username missing; AI features disabled.")
             return
 
         try:
             from openai import OpenAI
 
-            self.shapes_client = OpenAI(
+            self.sc = OpenAI(
                 base_url="https://api.shapes.inc/v1/",
-                api_key=api_key,
+                api_key=a,
                 timeout=60.0
             )
 
-            models_response = await asyncio.to_thread(self.shapes_client.models.list)
-            available_models = [model.id for model in models_response.data]
-            logger.info(f"Shapes.inc available models: {available_models}")
+            res = await asyncio.to_thread(self.sc.models.list)
+            am = [m.id for m in res.data]
+            l.info(f"Shapes.inc available models: {am}")
 
-            matched_model = next(
-                (m for m in available_models if model_username in m or m == model_username),
+            mm = next(
+                (m for m in am if u in m or m == u),
                 None
             )
 
-            if matched_model:
-                self.SHAPESINC_SHAPE_MODEL = matched_model
-                logger.info(f"Shapes.inc model resolved: {matched_model}")
+            if mm:
+                self.sm = mm
+                l.info(f"Shapes.inc model resolved: {mm}")
             else:
-                logger.critical(f"Shapes.inc model '{model_username}' not found. AI features disabled.")
-                self.shapes_client = None
+                l.critical(f"Shapes.inc model '{u}' not found. AI features disabled.")
+                self.sc = None
         except Exception as e:
-            logger.critical(f"Failed to initialize Shapes.inc client or resolve model: {e}")
-            self.shapes_client = None
+            l.critical(f"Failed to initialize Shapes.inc client or resolve model: {e}")
+            self.sc = None
 
-    def get_user_memory_filepath(self, guild_id, user_id):
-        return os.path.join(self.MEMORY_DIR, f"user_{guild_id}_{user_id}.json")
+    def get_user_memory_filepath(self, g, u):
+        return os.path.join(self.m, f"user_{g}_{u}.json")
 
-    def load_user_memory(self, guild_id, user_id):
-        filepath = self.get_user_memory_filepath(guild_id, user_id)
-        if os.path.exists(filepath):
+    def load_user_memory(self, g, u):
+        fp = self.get_user_memory_filepath(g, u)
+        if os.path.exists(fp):
             try:
-                with open(filepath, "r", encoding="utf-8") as f:
-                    memory = json.load(f)
+                with open(fp, "r", encoding="utf-8") as f:
+                    mem = json.load(f)
 
-                if "tone" not in memory:
-                    memory["tone"] = self.DEFAULT_TONE.copy()
+                if "tone" not in mem:
+                    mem["tone"] = self.dt.copy()
                 else:
-                    for k, v in self.DEFAULT_TONE.items():
-                        if k not in memory["tone"]:
-                            memory["tone"][k] = v
+                    for k, v in self.dt.items():
+                        if k not in mem["tone"]:
+                            mem["tone"][k] = v
 
-                return memory
+                return mem
             except json.JSONDecodeError as e:
-                logger.error(f"Error decoding memory for user {user_id} in guild {guild_id}: {e}")
+                l.error(f"Error decoding memory for user {u} in guild {g}: {e}")
             except Exception as e:
-                logger.error(f"Unexpected error loading memory for user {user_id} in guild {guild_id}: {e}")
+                l.error(f"Unexpected error loading memory for user {u} in guild {g}: {e}")
 
-        return {"log": [], "tone": self.DEFAULT_TONE.copy()}
+        return {"log": [], "tone": self.dt.copy()}
 
-    def save_user_memory(self, guild_id, user_id, memory_data):
-        filepath = self.get_user_memory_filepath(guild_id, user_id)
+    def save_user_memory(self, g, u, md):
+        fp = self.get_user_memory_filepath(g, u)
         try:
-            with open(filepath, "w", encoding="utf-8") as f:
-                json.dump(memory_data, f, indent=4)
+            with open(fp, "w", encoding="utf-8") as f:
+                json.dump(md, f, indent=4)
         except IOError as e:
-            logger.error(f"Failed to save user memory for {user_id} in guild {guild_id}: {e}")
+            l.error(f"Failed to save user memory for {u} in guild {g}: {e}")
 
-    def update_user_memory(self, guild_id, user_id, user_input, reply, tone_change):
-        memory = self.load_user_memory(guild_id, user_id)
+    def update_user_memory(self, g, u, ui, rep, tc):
+        mem = self.load_user_memory(g, u)
 
-        memory["log"].append({"role": "user", "content": user_input})
-        memory["log"].append({"role": "assistant", "content": reply})
-        memory["tone"][tone_change] += 1
+        mem["log"].append({"role": "user", "content": ui})
+        mem["log"].append({"role": "assistant", "content": rep})
+        mem["tone"][tc] += 1
 
-        current_memory_tokens = sum(
-            len(m["content"].split()) for m in memory["log"] if isinstance(m["content"], str)
+        c = sum(
+            len(m["content"].split()) for m in mem["log"] if isinstance(m["content"], str)
         )
 
-        while current_memory_tokens > self.MAX_MEMORY_PER_USER_TOKENS and len(memory["log"]) > 2:
-            memory["log"] = memory["log"][2:]
-            current_memory_tokens = sum(
-                len(m["content"].split()) for m in memory["log"] if isinstance(m["content"], str)
+        while c > self.mt and len(mem["log"]) > 2:
+            mem["log"] = mem["log"][2:]
+            c = sum(
+                len(m["content"].split()) for m in mem["log"] if isinstance(m["content"], str)
             )
 
-        self.save_user_memory(guild_id, user_id, memory)
+        self.save_user_memory(g, u, mem)
 
-    def determine_tone(self, text):
-        text_lower = text.lower()
-        if any(word in text_lower for word in [
+    def determine_tone(self, t):
+        tl = t.lower()
+        if any(w in tl for w in [
             "thank", "great", "awesome", "good", "love", "thanks", "nice", "cool", "helpful"
         ]):
             return "positive"
-        elif any(word in text_lower for word in [
+        elif any(w in tl for w in [
             "hate", "bad", "stupid", "annoying", "idiot", "sucks", "dislike", "useless"
         ]):
             return "negative"
         return "neutral"
 
     @commands.Cog.listener()
-    async def on_message(self, message):
-        if message.author.bot or message.author == self.bot.user:
+    async def on_message(self, mes):
+        if mes.author.bot or mes.author == self.b.user:
             return
 
-        channel_id_str = str(message.channel.id)
-        guild_id = str(message.guild.id) if message.guild else "DM"
-        user_id = str(message.author.id)
-        user_display_name = message.author.display_name
-        bot_mentioned = self.bot.user.mentioned_in(message)
+        c = str(mes.channel.id)
+        g = str(mes.guild.id) if mes.guild else "DM"
+        u = str(mes.author.id)
+        n = mes.author.display_name
+        bm = self.b.user.mentioned_in(mes)
 
         # Only proceed if bot is active in channel OR bot is mentioned
-        if not self.bot.active_channels.get(channel_id_str) and not bot_mentioned:
+        if not self.b.active_channels.get(c) and not bm:
             return
 
         # If message has attachments, reply refusal and return
-        if message.attachments:
-            await message.channel.typing()
-            await message.reply("Hmph! Such trivial images hold no sway over my ancient power. My grasp extends beyond mere visual conjurations.")
-            logger.info(f"Replied to message with attachment from {user_display_name} in {message.channel.name}")
+        if mes.attachments:
+            await mes.channel.typing()
+            await mes.reply("Hmph! Such trivial images hold no sway over my ancient power. My grasp extends beyond mere visual conjurations.")
+            l.info(f"Replied to message with attachment from {n} in {mes.channel.name}")
             return
 
-        if not message.content:
+        if not mes.content:
             return
 
         await self.lazy_init_shapes_client()
-        if not self.shapes_client:
-            logger.warning(f"Shapes.inc client not available for channel {channel_id_str}.")
-            await message.reply("My arcane powers are dormant... (AI service unavailable.)")
+        if not self.sc:
+            l.warning(f"Shapes.inc client not available for channel {c}.")
+            await mes.reply("My arcane powers are dormant... (AI service unavailable.)")
             return
 
-        async with message.channel.typing():
-            memory_data = self.load_user_memory(guild_id, user_id)
+        async with mes.channel.typing():
+            md = self.load_user_memory(g, u)
 
-            messages = [{"role": "system", "content": self.personality}]
-            pos, neg = memory_data["tone"]["positive"], memory_data["tone"]["negative"]
+            mes_list = [{"role": "system", "content": self.p}]
+            pos, neg = md["tone"]["positive"], md["tone"]["negative"]
 
             if pos > neg:
-                messages[0]["content"] += "\nYou like this person. Be good to them, they are your friend."
+                mes_list[0]["content"] += "\nYou like this person. Be good to them, they are your friend."
             elif neg > pos:
-                messages[0]["content"] += "\nThis person has been rude. Be cold, dismissive, brief, but forgiving."
+                mes_list[0]["content"] += "\nThis person has been rude. Be cold, dismissive, brief, but forgiving."
             else:
-                messages[0]["content"] += "\nNeutral. This person is neutral, speak normal tone, not rude nor friendly."
+                mes_list[0]["content"] += "\nNeutral. This person is neutral, speak normal tone, not rude nor friendly."
 
-            messages.extend(memory_data["log"])
+            mes_list.extend(md["log"])
 
-            user_input_for_api = f"{user_display_name}: {message.content}"
-            messages.append({"role": "user", "content": user_input_for_api})
+            ui = f"{n}: {mes.content}"
+            mes_list.append({"role": "user", "content": ui})
 
-            reply_text = "My power wanes... I cannot respond at this moment."
-            tone_change = "neutral"
+            rep = "My power wanes... I cannot respond at this moment."
+            tc = "neutral"
 
             try:
-                completion = await asyncio.to_thread(
-                    self.shapes_client.chat.completions.create,
-                    model=self.SHAPESINC_SHAPE_MODEL,
-                    messages=messages,
+                comp = await asyncio.to_thread(
+                    self.sc.chat.completions.create,
+                    model=self.sm,
+                    messages=mes_list,
                     max_tokens=200,
                     temperature=0.8,
                 )
-                if completion and completion.choices and completion.choices[0].message:
-                    reply_text = completion.choices[0].message.content.strip()
-                    tone_change = self.determine_tone(message.content)
+                if comp and comp.choices and comp.choices[0].message:
+                    rep = comp.choices[0].message.content.strip()
+                    tc = self.determine_tone(mes.content)
             except Exception as e:
-                logger.error(f"Error calling Shapes.inc API: {e}")
+                l.error(f"Error calling Shapes.inc API: {e}")
                 if "rate limit" in str(e).lower():
-                    reply_text = "Even a dragon's power is not infinite. My voice is temporarily restricted."
+                    rep = "Even a dragon's power is not infinite. My voice is temporarily restricted."
                 else:
-                    reply_text = "A temporal distortion in the flow of power prevents my response."
+                    rep = "A temporal distortion in the flow of power prevents my response."
 
-            if len(reply_text) > 1900:
-                reply_text = reply_text[:1897] + "..."
+            if len(rep) > 1900:
+                rep = rep[:1897] + "..."
 
-            await message.reply(reply_text)
-            self.update_user_memory(guild_id, user_id, user_input_for_api, reply_text, tone_change)
+            await mes.reply(rep)
+            self.update_user_memory(g, u, ui, rep, tc)
 
     @app_commands.command(
         name="search",
         description="Search for information with Yu Zhong's knowledge."
     )
-    async def search(self, interaction: discord.Interaction, query: str):
-        channel_id_str = str(interaction.channel_id)
+    async def search(self, i: discord.Interaction, q: str):
+        c = str(i.channel_id)
 
-        if interaction.guild and not self.bot.active_channels.get(channel_id_str):
-            await self.safe_send_response(interaction,
-                "My power is not active in this channel. Use `/arise` to awaken me.", ephemeral=True)
+        if i.guild and not self.b.active_channels.get(c):
+            await self.r(i, "My power is not active in this channel. Use `/arise` to awaken me.", ephemeral=True)
             return
 
-        await interaction.response.defer()
+        await i.response.defer()
 
         await self.lazy_init_shapes_client()
-        if not self.shapes_client:
-            await self.safe_send_response(interaction,
-                "My arcane powers are dormant... (AI service unavailable.)")
+        if not self.sc:
+            await self.r(i, "My arcane powers are dormant... (AI service unavailable.)")
             return
 
         try:
-            guild_id = str(interaction.guild_id) if interaction.guild else "DM"
-            user_id = str(interaction.user.id)
-            memory_data = self.load_user_memory(guild_id, user_id)
+            g = str(i.guild_id) if i.guild else "DM"
+            u = str(i.user.id)
+            md = self.load_user_memory(g, u)
 
-            mlbb_cog = self.bot.get_cog("MLBBCog")
-            patch_notes = await mlbb_cog.get_latest_patch_notes() if mlbb_cog else ""
-            if not mlbb_cog:
-                logger.warning("MLBBCog not loaded, cannot get patch notes for search.")
+            mc = self.b.get_cog("MLBBCog")
+            pn = await mc.get_latest_patch_notes() if mc else ""
+            if not mc:
+                l.warning("MLBBCog not loaded, cannot get patch notes for search.")
 
-            user_display_name = interaction.user.display_name
+            n = i.user.display_name
 
-            search_personality = f"{self.personality}\n\nYou are being asked to search for information about: '{query}'. Provide helpful, accurate information while maintaining your Yu Zhong personality. Do not confuse other users with '{user_display_name}'."
+            sp = f"{self.p}\n\nYou are being asked to search for information about: '{q}'. Provide helpful, accurate information while maintaining your Yu Zhong personality. Do not confuse other users with '{n}'."
 
-            pos, neg = memory_data["tone"]["positive"], memory_data["tone"]["negative"]
+            pos, neg = md["tone"]["positive"], md["tone"]["negative"]
             if pos > neg:
-                search_personality += "\nYou like this person. Be good to them, they are your friend."
+                sp += "\nYou like this person. Be good to them, they are your friend."
             elif neg > pos:
-                search_personality += "\nThis person has been rude. Be cold, dismissive, brief, but forgiving."
+                sp += "\nThis person has been rude. Be cold, dismissive, brief, but forgiving."
             else:
-                search_personality += "\nNeutral. This person is neutral, speak normal tone, not rude nor friendly."
+                sp += "\nNeutral. This person is neutral, speak normal tone, not rude nor friendly."
 
-            messages = [{"role": "system", "content": search_personality}]
-            messages.extend(memory_data["log"])
+            mes_list = [{"role": "system", "content": sp}]
+            mes_list.extend(md["log"])
 
-            full_query_content = (
-                f"{user_display_name}: Search for information about: {query}\n\n"
-                f"[User Info: Address the user as '{user_display_name}' in your response]"
+            fqc = (
+                f"{n}: Search for information about: {q}\n\n"
+                f"[User Info: Address the user as '{n}' in your response]"
             )
-            if patch_notes:
-                full_query_content += f"\n\n[Context: Latest MLBB Patch Notes]\n{patch_notes}"
+            if pn:
+                fqc += f"\n\n[Context: Latest MLBB Patch Notes]\n{pn}"
 
-            messages.append({"role": "user", "content": full_query_content})
+            mes_list.append({"role": "user", "content": fqc})
 
-            reply_text = "My power wanes... I cannot fulfill this search at the moment."
-            tone_change = "neutral"
+            rep = "My power wanes... I cannot fulfill this search at the moment."
+            tc = "neutral"
 
             try:
-                completion = await asyncio.to_thread(
-                    self.shapes_client.chat.completions.create,
-                    model=self.SHAPESINC_SHAPE_MODEL,
-                    messages=messages,
+                comp = await asyncio.to_thread(
+                    self.sc.chat.completions.create,
+                    model=self.sm,
+                    messages=mes_list,
                     max_tokens=400,
                     temperature=0.7,
                 )
-                if completion and completion.choices and completion.choices[0].message:
-                    reply_text = completion.choices[0].message.content.strip()
-                    tone_change = self.determine_tone(query)
+                if comp and comp.choices and comp.choices[0].message:
+                    rep = comp.choices[0].message.content.strip()
+                    tc = self.determine_tone(q)
             except Exception as e:
-                logger.error(f"Error calling Shapes.inc API for search: {e}")
+                l.error(f"Error calling Shapes.inc API for search: {e}")
                 if "rate limit" in str(e).lower():
-                    reply_text = "Even a dragon's power is not infinite. My knowledge is temporarily restricted."
+                    rep = "Even a dragon's power is not infinite. My knowledge is temporarily restricted."
                 else:
-                    reply_text = "A temporal distortion in the flow of power prevents my search."
+                    rep = "A temporal distortion in the flow of power prevents my search."
 
-            if len(reply_text) > 1900:
-                reply_text = reply_text[:1897] + "..."
+            if len(rep) > 1900:
+                rep = rep[:1897] + "..."
 
-            await self.safe_send_response(interaction, reply_text)
-            self.update_user_memory(guild_id, user_id, full_query_content, reply_text, tone_change)
+            await self.r(i, rep)
+            self.update_user_memory(g, u, fqc, rep, tc)
 
         except Exception as e:
-            logger.error(f"Unexpected error in search command: {e}")
-            await self.safe_send_response(interaction, "A ripple in the void has interrupted my search.")
+            l.error(f"Unexpected error in search command: {e}")
+            await self.r(i, "A ripple in the void has interrupted my search.")
 
 
-async def setup(bot):
-    await bot.add_cog(AIChatCog(bot))
+async def setup(b):
+    await b.add_cog(AIChatCog(b))
