@@ -5,21 +5,62 @@ import os
 import json
 import logging
 import asyncio
-from openai import OpenAI
 
 logger = logging.getLogger('YuZhongBot')
-
 
 class AIChatCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.personality = bot.personality
-        self.shapes_client = bot.shapes_client
-        self.SHAPESINC_SHAPE_MODEL = bot.SHAPESINC_SHAPE_MODEL
         self.safe_send_response = bot.safe_send_response
         self.DEFAULT_TONE = bot.DEFAULT_TONE
         self.MAX_MEMORY_PER_USER_TOKENS = bot.MAX_MEMORY_PER_USER_TOKENS
         self.MEMORY_DIR = bot.MEMORY_DIR
+
+        # Lazy init placeholders
+        self.shapes_client = None
+        self.SHAPESINC_SHAPE_MODEL = None
+        self.shapes_initialized = False
+
+    async def lazy_init_shapes_client(self):
+        if self.shapes_initialized:
+            return
+        self.shapes_initialized = True
+
+        api_key = getattr(self.bot, "SHAPESINC_API_KEY", None)
+        model_username = getattr(self.bot, "SHAPESINC_MODEL_USERNAME", None)
+
+        if not api_key or not model_username:
+            logger.warning("Shapes.inc API key or model username missing; AI features disabled.")
+            return
+
+        try:
+            from openai import OpenAI
+
+            self.shapes_client = OpenAI(
+                base_url="https://api.shapes.inc/v1/",
+                api_key=api_key,
+                timeout=60.0
+            )
+
+            models_response = await asyncio.to_thread(self.shapes_client.models.list)
+            available_models = [model.id for model in models_response.data]
+            logger.info(f"Shapes.inc available models: {available_models}")
+
+            matched_model = next(
+                (m for m in available_models if model_username in m or m == model_username),
+                None
+            )
+
+            if matched_model:
+                self.SHAPESINC_SHAPE_MODEL = matched_model
+                logger.info(f"Shapes.inc model resolved: {matched_model}")
+            else:
+                logger.critical(f"Shapes.inc model '{model_username}' not found. AI features disabled.")
+                self.shapes_client = None
+        except Exception as e:
+            logger.critical(f"Failed to initialize Shapes.inc client or resolve model: {e}")
+            self.shapes_client = None
 
     def get_user_memory_filepath(self, guild_id, user_id):
         return os.path.join(self.MEMORY_DIR, f"user_{guild_id}_{user_id}.json")
@@ -57,10 +98,6 @@ class AIChatCog(commands.Cog):
     def update_user_memory(self, guild_id, user_id, user_input, reply, tone_change):
         memory = self.load_user_memory(guild_id, user_id)
 
-        # IMPORTANT: When updating memory, include the display name for clarity
-        # This helps the AI understand who said what in past interactions
-        # user_input already contains the display name if on_message or search command adds it.
-        # So, we just use the user_input passed to this function.
         memory["log"].append({"role": "user", "content": user_input})
         memory["log"].append({"role": "assistant", "content": reply})
         memory["tone"][tone_change] += 1
@@ -95,7 +132,7 @@ class AIChatCog(commands.Cog):
             return
 
         channel_id_str = str(message.channel.id)
-        guild_id = str(message.guild.id)
+        guild_id = str(message.guild.id) if message.guild else "DM"
         user_id = str(message.author.id)
         user_display_name = message.author.display_name
         bot_mentioned = self.bot.user.mentioned_in(message)
@@ -104,26 +141,23 @@ class AIChatCog(commands.Cog):
         if not self.bot.active_channels.get(channel_id_str) and not bot_mentioned:
             return
 
-        # --- REVISED LOGIC FOR HANDLING IMAGES ---
-        # If there are ANY attachments, send the predefined refusal and stop.
+        # If message has attachments, reply refusal and return
         if message.attachments:
-            await message.channel.typing() # Show typing indicator
-            # Yu Zhong's refusal for images, as per personality.txt
+            await message.channel.typing()
             await message.reply("Hmph! Such trivial images hold no sway over my ancient power. My grasp extends beyond mere visual conjurations.")
             logger.info(f"Replied to message with attachment from {user_display_name} in {message.channel.name}")
-            return # Stop further processing for messages with attachments
-        # --- END REVISED LOGIC ---
+            return
 
-        # If there's no content (after checking for attachments), return (e.g., sticker, but no attachment).
         if not message.content:
             return
 
-        async with message.channel.typing():
-            if not self.shapes_client:
-                logger.warning(f"Shapes.inc client not available for channel {channel_id_str}.")
-                await message.reply("My arcane powers are dormant... (AI service unavailable.)")
-                return
+        await self.lazy_init_shapes_client()
+        if not self.shapes_client:
+            logger.warning(f"Shapes.inc client not available for channel {channel_id_str}.")
+            await message.reply("My arcane powers are dormant... (AI service unavailable.)")
+            return
 
+        async with message.channel.typing():
             memory_data = self.load_user_memory(guild_id, user_id)
 
             messages = [{"role": "system", "content": self.personality}]
@@ -138,7 +172,6 @@ class AIChatCog(commands.Cog):
 
             messages.extend(memory_data["log"])
 
-            # CRITICAL CHANGE: Include user_display_name in the content for API calls
             user_input_for_api = f"{user_display_name}: {message.content}"
             messages.append({"role": "user", "content": user_input_for_api})
 
@@ -155,7 +188,7 @@ class AIChatCog(commands.Cog):
                 )
                 if completion and completion.choices and completion.choices[0].message:
                     reply_text = completion.choices[0].message.content.strip()
-                    tone_change = self.determine_tone(message.content) # Use original message.content for tone detection
+                    tone_change = self.determine_tone(message.content)
             except Exception as e:
                 logger.error(f"Error calling Shapes.inc API: {e}")
                 if "rate limit" in str(e).lower():
@@ -167,7 +200,6 @@ class AIChatCog(commands.Cog):
                 reply_text = reply_text[:1897] + "..."
 
             await message.reply(reply_text)
-            # IMPORTANT: Store the user_input_for_api in memory so the AI sees it structured correctly in future turns
             self.update_user_memory(guild_id, user_id, user_input_for_api, reply_text, tone_change)
 
     @app_commands.command(
@@ -184,6 +216,7 @@ class AIChatCog(commands.Cog):
 
         await interaction.response.defer()
 
+        await self.lazy_init_shapes_client()
         if not self.shapes_client:
             await self.safe_send_response(interaction,
                 "My arcane powers are dormant... (AI service unavailable.)")
@@ -201,7 +234,6 @@ class AIChatCog(commands.Cog):
 
             user_display_name = interaction.user.display_name
 
-            # Add explicit instruction about usernames in the system prompt for search as well
             search_personality = f"{self.personality}\n\nYou are being asked to search for information about: '{query}'. Provide helpful, accurate information while maintaining your Yu Zhong personality. Do not confuse other users with '{user_display_name}'."
 
             pos, neg = memory_data["tone"]["positive"], memory_data["tone"]["negative"]
@@ -215,7 +247,6 @@ class AIChatCog(commands.Cog):
             messages = [{"role": "system", "content": search_personality}]
             messages.extend(memory_data["log"])
 
-            # CRITICAL CHANGE: Include user_display_name in the content for API calls in search command
             full_query_content = (
                 f"{user_display_name}: Search for information about: {query}\n\n"
                 f"[User Info: Address the user as '{user_display_name}' in your response]"
@@ -250,7 +281,6 @@ class AIChatCog(commands.Cog):
                 reply_text = reply_text[:1897] + "..."
 
             await self.safe_send_response(interaction, reply_text)
-            # IMPORTANT: Store the full_query_content in memory so the AI sees it structured correctly in future turns
             self.update_user_memory(guild_id, user_id, full_query_content, reply_text, tone_change)
 
         except Exception as e:
