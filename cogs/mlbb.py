@@ -4,8 +4,8 @@ from discord import app_commands
 import logging
 import asyncio
 import time
-import requests
 from bs4 import BeautifulSoup
+import cloudscraper  # <-- use cloudscraper instead of requests
 
 logger = logging.getLogger('YuZhongBot')
 
@@ -21,6 +21,9 @@ class MLBBCog(commands.Cog):
         self.shapes_client = None
         self.SHAPESINC_SHAPE_MODEL = None
         self.shapes_initialized = False
+
+        # Cloudscraper session
+        self.scraper = cloudscraper.create_scraper()  # This handles Cloudflare
 
     async def lazy_init_shapes_client(self):
         if self.shapes_initialized:
@@ -90,7 +93,8 @@ class MLBBCog(commands.Cog):
 
         for url in urls_to_try:
             try:
-                response = await asyncio.to_thread(requests.get, url, timeout=10)
+                # Use cloudscraper instead of requests
+                response = await asyncio.to_thread(self.scraper.get, url, timeout=10)
                 response.raise_for_status()
                 soup = BeautifulSoup(response.text, 'html.parser')
 
@@ -125,11 +129,8 @@ class MLBBCog(commands.Cog):
                         final_summary_found = "Recent patch information:\n" + "\n• ".join(relevant_sentences)
                         break
 
-            except requests.exceptions.RequestException as e:
-                logger.warning(f"Failed to fetch from {url}: {e}")
-                continue
             except Exception as e:
-                logger.error(f"Error parsing {url}: {e}")
+                logger.warning(f"Failed to fetch or parse from {url}: {e}")
                 continue
 
         # If we have summary text and AI client ready, summarize with AI
