@@ -5,82 +5,80 @@ import logging
 import asyncio
 import time
 from bs4 import BeautifulSoup
-import cloudscraper  # <-- 1. This fulfills the first instruction to import cloudscraper.
+import cloudscraper
 
-logger = logging.getLogger('YuZhongBot')
+l = logging.getLogger('YuZhongBot')
 
-patch_cache = {"data": None, "timestamp": 0}
+pc = {"data": None, "timestamp": 0}
 
 class MLBBCog(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-        self.personality = bot.personality
-        self.safe_send_response = bot.safe_send_response
+    def __init__(self, b):
+        self.b = b
+        self.p = b.personality
+        self.r = b.safe_send_response
 
         # Lazy init placeholders
-        self.shapes_client = None
-        self.SHAPESINC_SHAPE_MODEL = None
-        self.shapes_initialized = False
+        self.sc = None
+        self.sm = None
+        self.si = False
 
         # Cloudscraper session
-        # This part fulfills the "scraper = cloudscraper.create_scraper()" instruction.
-        # It's done here for efficiency, so it's only created once.
-        self.scraper = cloudscraper.create_scraper()
+        self.cs = cloudscraper.create_scraper()
 
     async def lazy_init_shapes_client(self):
-        if self.shapes_initialized:
+        if self.si:
             return
-        self.shapes_initialized = True
+        self.si = True
 
-        api_key = getattr(self.bot, "SHAPESINC_API_KEY", None)
-        model_username = getattr(self.bot, "SHAPESINC_MODEL_USERNAME", None)
+        a = getattr(self.b, "SHAPESINC_API_KEY", None)
+        u = getattr(self.b, "SHAPESINC_MODEL_USERNAME", None)
 
-        if not api_key or not model_username:
-            logger.warning("Shapes.inc API key or model username missing; AI features disabled.")
+        if not a or not u:
+            l.warning("Shapes.inc API key or model username missing; AI features disabled.")
             return
 
         try:
             from openai import OpenAI
 
-            self.shapes_client = OpenAI(
+            self.sc = OpenAI(
                 base_url="https://api.shapes.inc/v1/",
-                api_key=api_key,
+                api_key=a,
                 timeout=60.0
             )
 
-            models_response = await asyncio.to_thread(self.shapes_client.models.list)
-            available_models = [model.id for model in models_response.data]
-            logger.info(f"Shapes.inc available models: {available_models}")
+            res = await asyncio.to_thread(self.sc.models.list)
+            am = [m.id for m in res.data]
+            l.info(f"Shapes.inc available models: {am}")
 
-            matched_model = next(
-                (m for m in available_models if model_username in m or m == model_username),
+            mm = next(
+                (m for m in am if u in m or m == u),
                 None
             )
 
-            if matched_model:
-                self.SHAPESINC_SHAPE_MODEL = matched_model
-                logger.info(f"Shapes.inc model resolved: {matched_model}")
+            if mm:
+                self.sm = mm
+                l.info(f"Shapes.inc model resolved: {mm}")
             else:
-                logger.critical(f"Shapes.inc model '{model_username}' not found. AI features disabled.")
-                self.shapes_client = None
+                l.critical(f"Shapes.inc model '{u}' not found. AI features disabled.")
+                self.sc = None
         except Exception as e:
-            logger.critical(f"Failed to initialize Shapes.inc client or resolve model: {e}")
-            self.shapes_client = None
+            l.critical(f"Failed to initialize Shapes.inc client or resolve model: {e}")
+            self.sc = None
 
     async def get_latest_patch_notes(self):
-        global patch_cache
-        now = time.time()
-        if patch_cache["data"] and (now - patch_cache["timestamp"]) < 3600:
-            return patch_cache["data"]
+        global pc
+        n = time.time()
+        if pc["data"] and (n - pc["timestamp"]) < 3600:
+            return pc["data"]
 
         await self.lazy_init_shapes_client()
 
-        urls_to_try = [
+        urls = [
             "https://m.mobilelegends.com/en/news",
             "https://www.mobilelegends.com/en/news",
             "https://www.google.com/search?q=mobile+legends+patch+notes&hl=en",
         ]
-        news_selectors = [
+        sel = [
             "div.news-content",
             "article.news-item",
             "div.news-detail-content",
@@ -89,96 +87,93 @@ class MLBBCog(commands.Cog):
             "p",
             "h2", "h3"
         ]
-        patch_keywords = ["patch", "update", "balance", "hero", "nerf", "buff", "adjustment", "changelog"]
+        k = ["patch", "update", "balance", "hero", "nerf", "buff", "adjustment", "changelog"]
 
-        final_summary_found = ""
+        s = ""
 
-        for url in urls_to_try:
+        for u in urls:
             try:
-                # 2. This line fulfills the second instruction, replacing the old
-                # request with the cloudscraper one.
-                response = await asyncio.to_thread(self.scraper.get, url, timeout=10)
-                
-                response.raise_for_status()
-                soup = BeautifulSoup(response.text, 'html.parser')
+                res = await asyncio.to_thread(self.cs.get, u, timeout=10)
+                res.raise_for_status()
+                soup = BeautifulSoup(res.text, 'html.parser')
 
-                for selector in news_selectors:
-                    elements = soup.select(selector)
-                    if elements:
-                        texts = []
-                        for elem in elements:
+                for p in sel:
+                    e = soup.select(p)
+                    if e:
+                        t = []
+                        for elem in e:
                             text = elem.get_text(strip=True)
-                            if text and len(text) > 50 and any(keyword in text.lower() for keyword in patch_keywords):
-                                texts.append(text[:500])
-                                if len(texts) >= 3:
+                            if text and len(text) > 50 and any(kwd in text.lower() for kwd in k):
+                                t.append(text[:500])
+                                if len(t) >= 3:
                                     break
-                        if texts:
-                            final_summary_found = f"Latest from {url}:\n" + "\n\n".join(texts)
+                        if t:
+                            s = f"Latest from {u}:\n" + "\n\n".join(t)
                             break
 
-                if final_summary_found:
+                if s:
                     break
 
-                if not final_summary_found:
-                    all_text = soup.get_text()
-                    sentences = all_text.split('.')
-                    relevant_sentences = []
-                    for sentence in sentences:
+                if not s:
+                    at = soup.get_text()
+                    sen = at.split('.')
+                    rel = []
+                    for sentence in sen:
                         sentence = sentence.strip()
-                        if any(keyword in sentence.lower() for keyword in patch_keywords) and len(sentence) > 30:
-                            relevant_sentences.append(sentence[:200])
-                            if len(relevant_sentences) >= 5:
+                        if any(kwd in sentence.lower() for kwd in k) and len(sentence) > 30:
+                            rel.append(sentence[:200])
+                            if len(rel) >= 5:
                                 break
-                    if relevant_sentences:
-                        final_summary_found = "Recent patch information:\n" + "\n• ".join(relevant_sentences)
+                    if rel:
+                        s = "Recent patch information:\n" + "\n• ".join(rel)
                         break
 
             except Exception as e:
-                logger.warning(f"Failed to fetch or parse from {url}: {e}")
+                l.warning(f"Failed to fetch or parse from {u}: {e}")
                 continue
 
         # If we have summary text and AI client ready, summarize with AI
-        if final_summary_found and self.shapes_client and self.SHAPESINC_SHAPE_MODEL:
+        if s and self.sc and self.sm:
             try:
-                summarization_prompt = (
+                prompt = (
                     f"Summarize the following Mobile Legends: Bang Bang patch notes concisely and in a tone suitable for Yu Zhong "
                     f"(authoritative, a bit dismissive, focusing on key changes like buffs/nerfs). Keep it under 300 words. "
                     f"Focus on important hero or item changes. If there are no clear changes, state that.\n\nRaw text:\n"
-                    f"{final_summary_found[:8000]}"
+                    f"{s[:8000]}"
                 )
-                summarize_messages = [
-                    {"role": "system", "content": self.personality},
-                    {"role": "user", "content": summarization_prompt}
+                m = [
+                    {"role": "system", "content": self.p},
+                    {"role": "user", "content": prompt}
                 ]
-                summarized_completion = await asyncio.to_thread(
-                    self.shapes_client.chat.completions.create,
-                    model=self.SHAPESINC_SHAPE_MODEL,
-                    messages=summarize_messages,
+                comp = await asyncio.to_thread(
+                    self.sc.chat.completions.create,
+                    model=self.sm,
+                    messages=m,
                     max_tokens=250,
                     temperature=0.4
                 )
-                if summarized_completion and summarized_completion.choices and summarized_completion.choices[0].message:
-                    summary = summarized_completion.choices[0].message.content.strip()
-                    patch_cache["data"] = summary
-                    patch_cache["timestamp"] = now
+                if comp and comp.choices and comp.choices[0].message:
+                    summary = comp.choices[0].message.content.strip()
+                    pc["data"] = summary
+                    pc["timestamp"] = n
                     return summary
             except Exception as e:
-                logger.warning(f"AI summarization failed: {e}. Using scraped text fallback.")
+                l.warning(f"AI summarization failed: {e}. Using scraped text fallback.")
 
-        if not final_summary_found:
-            final_summary_found = "Unable to fetch current patch notes. The Land of Dawn's secrets remain hidden for now."
+        if not s:
+            s = "Unable to fetch current patch notes. The Land of Dawn's secrets remain hidden for now."
 
-        patch_cache["data"] = final_summary_found
-        patch_cache["timestamp"] = now
-        return patch_cache["data"]
+        pc["data"] = s
+        pc["timestamp"] = n
+        return pc["data"]
 
     @app_commands.command(name="patch", description="Shows the latest MLBB patch summary.")
-    async def patch(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        summary = await self.get_latest_patch_notes()
-        if len(summary) > 1900:
-            summary = summary[:1897] + "..."
-        await self.safe_send_response(interaction, f"\U0001F4DC **Latest Patch Notes Summary:**\n```{summary}```")
+    async def patch(self, i: discord.Interaction):
+        await i.response.defer()
+        s = await self.get_latest_patch_notes()
+        if len(s) > 1900:
+            s = s[:1897] + "..."
+        await self.r(i, f"\U0001F4DC **Latest Patch Notes Summary:**\n```{s}```")
 
-async def setup(bot):
-    await bot.add_cog(MLBBCog(bot))
+async def setup(b):
+    await b.add_cog(MLBBCog(b))
