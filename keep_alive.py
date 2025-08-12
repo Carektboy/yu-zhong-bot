@@ -3,28 +3,21 @@ import threading
 from flask import Flask
 import logging
 
-l = logging.getLogger('YuZhongBot')
+logger = logging.getLogger('YuZhongBot')
 
-a = Flask(__name__)
+app = Flask(__name__)
 
-@a.route('/')
-def h():
+@app.route('/')
+def home():
     return "Bot is alive!"
 
-def r():
-    p = int(os.environ.get("PORT", 5000))
-    l.info(f"Keep-alive web server starting on port {p}")
-    a.run(host='0.0.0.0', port=p, debug=False)
+def run_flask_server():
+    port = int(os.environ.get("PORT", 5000))
+    logger.info(f"Keep-alive web server starting on port {port}")
+    app.run(host='0.0.0.0', port=port, debug=False)
 
-def k():
-    t = threading.Thread(target=r)
+def keep_alive():
+    t = threading.Thread(target=run_flask_server)
     t.daemon = True
     t.start()
-    l.info("Keep-alive web server thread started.")
-
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO,
-                        format='%(asctime)s:%(levelname)s:%(name)s: %(message)s')
-    k()
-    import time
-    time.sleep(30)
+    logger.info("Keep-alive web server thread started.")
